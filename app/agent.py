@@ -20,7 +20,7 @@ def get_configured_router() -> LLMRouter:
     # 1. Primary: Google Gemini
     gemini_key = os.getenv("GEMINI_API_KEY")
     if gemini_key:
-        providers.append(GeminiProvider(api_key=gemini_key, model_name="gemini-2.0-flash"))
+        providers.append(GeminiProvider(api_key=gemini_key, model_name="gemini-3.6-flash"))
 
     # 2. Fallback 1: Groq Cloud
     groq_key = os.getenv("GROQ_API_KEY")
@@ -29,7 +29,7 @@ def get_configured_router() -> LLMRouter:
             name="Groq",
             base_url="https://api.groq.com/openai/v1",
             api_key=groq_key,
-            model_name="llama-3.3-70b-versatile"
+            model_name="qwen/qwen3.8-27b"
         ))
 
     # 3. Fallback 2: OpenRouter
