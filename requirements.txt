@@ -4,3 +4,4 @@ sqlmodel
 psycopg2
 python-dotenv
 google-genai
+openai
