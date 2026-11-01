@@ -1,5 +1,8 @@
 import os
-from fastapi import FastAPI, Depends, HTTPException, BackgroundTasks
+import json
+import asyncio
+from fastapi import FastAPI, Depends, HTTPException, BackgroundTasks, WebSocket, WebSocketDisconnect
+from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from contextlib import asynccontextmanager
@@ -10,12 +13,14 @@ import uuid
 from app.db import init_db, get_session
 from app.agent import run_agent_loop
 from app.models import AgentSession, AgentStep, AgentSessionRead, SimpleUser
+from app.runner_manager import runner_manager
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     print("Initializing Database...")
     init_db()
-    print("Database initialization successful!")
+    runner_manager.set_loop(asyncio.get_running_loop())
+    print("Database & RunnerManager initialized successfully!")
     yield
     print("Shutting Down server...")
 
@@ -38,6 +43,39 @@ app.add_middleware(
 @app.get("/api/health", tags=["System"])
 def health_check():
     return {"status": "ok", "message": "Terminal Agent API running"}
+
+# Local Runner WebSocket & status endpoints
+@app.websocket("/ws/runner/{user_id}")
+async def runner_websocket_endpoint(websocket: WebSocket, user_id: str):
+    await websocket.accept()
+    try:
+        init_data = await websocket.receive_text()
+        metadata = json.loads(init_data) if init_data else {}
+        await runner_manager.register(user_id, websocket, metadata)
+        while True:
+            msg = await websocket.receive_text()
+            data = json.loads(msg)
+            runner_manager.handle_message(data)
+    except WebSocketDisconnect:
+        runner_manager.unregister(user_id)
+    except Exception as e:
+        print(f"[WebSocket Error] {e}")
+        runner_manager.unregister(user_id)
+
+@app.get("/api/runner/status", tags=["Runner"])
+def get_runner_status(user_id: str):
+    """Returns whether a local runner daemon is currently connected for this user."""
+    connected = runner_manager.is_connected(user_id)
+    info = runner_manager.get_info(user_id) if connected else None
+    return {"connected": connected, "info": info}
+
+@app.get("/runner.py", tags=["Runner"])
+def download_runner_script():
+    """Download the standalone Python script to run on local machine."""
+    runner_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "runner.py")
+    if os.path.exists(runner_path):
+        return FileResponse(runner_path, media_type="text/x-python", filename="runner.py")
+    raise HTTPException(status_code=404, detail="runner.py script not found on server")
 
 # Auth Endpoint: Login or auto-register simple username/password
 @app.post("/api/auth/login", tags=["Auth"])

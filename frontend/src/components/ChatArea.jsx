@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { ArrowUp, Menu, RefreshCw, Loader2, Bot, Terminal, Copy, Check, Zap, AlertTriangle, Brain } from 'lucide-react';
+import { ArrowUp, Menu, RefreshCw, Loader2, Bot, Terminal, Copy, Check, Zap, AlertTriangle, Brain, Laptop } from 'lucide-react';
 import TerminalCard from './TerminalCard';
 import EmptyState from './EmptyState';
 
@@ -9,6 +9,8 @@ export default function ChatArea({
   onRefresh,
   onToggleSidebar,
   isLoading,
+  runnerStatus,
+  onOpenRunnerModal,
 }) {
   const [inputText, setInputText] = useState('');
   const [copiedId, setCopiedId] = useState(null);
@@ -69,6 +71,29 @@ export default function ChatArea({
             <span className="text-[11px] font-medium px-2 py-0.5 rounded-full bg-[#10a37f]/20 text-[#10a37f] border border-[#10a37f]/30">
               v1.0
             </span>
+            {/* Execution Target Environment Badge */}
+            <button
+              onClick={onOpenRunnerModal}
+              title="Click to manage execution environment (Local Machine vs. Cloud Sandbox)"
+              className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border transition cursor-pointer ml-1 ${
+                runnerStatus?.connected
+                  ? 'bg-[#14532d]/40 border-[#22c55e]/40 text-[#4ade80] hover:bg-[#14532d]/60'
+                  : 'bg-[#27272a]/60 border-[#3f3f46] text-[#9ca3af] hover:text-white hover:bg-[#27272a]'
+              }`}
+            >
+              <span className={`w-2 h-2 rounded-full ${
+                runnerStatus?.connected ? 'bg-[#22c55e] animate-pulse' : 'bg-[#71717a]'
+              }`} />
+              <Laptop className="w-3 h-3 text-[#60a5fa]" />
+              <span className="hidden sm:inline">
+                {runnerStatus?.connected ? 'Local Machine Active' : 'Cloud Sandbox'}
+              </span>
+              {!runnerStatus?.connected && (
+                <span className="text-[10px] text-[#60a5fa] hover:underline ml-0.5 font-semibold">
+                  Connect Local
+                </span>
+              )}
+            </button>
           </div>
         </div>
 

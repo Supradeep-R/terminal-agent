@@ -8,6 +8,7 @@ from sqlmodel import Session, select
 from app.db import engine
 from app.models import AgentSession, AgentStep
 from app.sandbox import execute_command
+from app.runner_manager import runner_manager
 from app.llm.base import BaseLLMProvider
 from app.llm.gemini_provider import GeminiProvider
 from app.llm.openai_compatible_provider import OpenAICompatibleProvider
@@ -157,18 +158,43 @@ def run_agent_loop(session_id: uuid.UUID, follow_up_prompt: Optional[str] = None
         # Reconstruct full multi-turn history from DB
         messages = build_conversation_history(db, session_item, follow_up_prompt)
 
+        # Check if user has an active Local Runner connected
+        user_id = session_item.user_id or "guest"
+        has_local_runner = runner_manager.is_connected(user_id)
+        runner_info = runner_manager.get_info(user_id) if has_local_runner else None
+
+        # Tailor system instruction to the actual active execution environment
+        if has_local_runner:
+            platform_desc = runner_info.get("platform", "Local OS") if runner_info else "Local OS"
+            working_dir = runner_info.get("cwd", "") if runner_info else ""
+            env_instruction = (
+                f"\n\nCURRENT EXECUTION ENVIRONMENT: You are connected directly to the user's local machine ({platform_desc}) via the Local Runner bridge. "
+                f"The current local working directory is '{working_dir}'. "
+                "You have full permission and access to local files, folders, and PowerShell/Bash terminal commands."
+            )
+            env_label = "Local Machine"
+        else:
+            env_instruction = (
+                "\n\nCURRENT EXECUTION ENVIRONMENT: You are currently running inside an isolated cloud Linux container sandbox. "
+                "CRITICAL: This cloud sandbox CANNOT access the user's personal laptop files or Windows drive paths (such as 'C:\\Users\\...'). "
+                "If the user asks to inspect or modify their local computer files, explain that they are in Cloud Sandbox mode and need to connect their Local Runner using the button in the UI."
+            )
+            env_label = "Cloud Sandbox"
+
+        dynamic_system_prompt = SYSTEM_INSTRUCTION + env_instruction
+
         steps_in_this_turn = 0
 
         try:
             while steps_in_this_turn < max_steps:
                 llm_response = router.generate(
                     messages=messages,
-                    system_instruction=SYSTEM_INSTRUCTION,
+                    system_instruction=dynamic_system_prompt,
                     tools=TOOLS_SCHEMA
                 )
 
                 routing_trace_json = json.dumps(llm_response.routing_trace) if getattr(llm_response, "routing_trace", None) else None
-                model_identifier = f"{llm_response.provider_name} ({llm_response.model_name})"
+                model_identifier = f"{llm_response.provider_name} ({llm_response.model_name}) • {env_label}"
 
                 # Case 1: No tool calls -> Agent finished this turn
                 if not llm_response.tool_calls:
@@ -195,9 +221,13 @@ def run_agent_loop(session_id: uuid.UUID, follow_up_prompt: Optional[str] = None
                     command_to_run = tool_call.args.get("command", "")
                     thought_content = tool_call.args.get("thought") or (llm_response.text.strip() if llm_response.text else None) or f"Executing '{command_to_run}' to progress toward goal."
 
-                    print(f"[Agent] Step {current_step_number}: Executing -> {command_to_run}")
+                    print(f"[Agent] Step {current_step_number} [{env_label}]: Executing -> {command_to_run}")
 
-                    output, exit_code = execute_command(command_to_run)
+                    # Route execution to local runner if connected, else cloud sandbox
+                    if has_local_runner:
+                        output, exit_code = runner_manager.execute_remote(user_id, command_to_run)
+                    else:
+                        output, exit_code = execute_command(command_to_run)
 
                     # Save step to database
                     step_record = AgentStep(

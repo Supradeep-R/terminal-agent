@@ -61,3 +61,13 @@ export async function loginOrRegister(username, password) {
   }
   return res.json();
 }
+
+export async function fetchRunnerStatus(userId) {
+  try {
+    const res = await fetch(`${API_BASE}/api/runner/status?user_id=${encodeURIComponent(userId)}`);
+    if (!res.ok) return { connected: false };
+    return res.json();
+  } catch (e) {
+    return { connected: false };
+  }
+}

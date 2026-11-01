@@ -2,12 +2,14 @@ import React, { useState, useEffect, useRef } from 'react';
 import Sidebar from './components/Sidebar';
 import ChatArea from './components/ChatArea';
 import AuthModal from './components/AuthModal';
+import RunnerModal from './components/RunnerModal';
 import {
   fetchSessions,
   fetchSessionDetails,
   createSession,
   sendPrompt,
   deleteSession as apiDeleteSession,
+  fetchRunnerStatus,
 } from './api';
 
 function getInitialUser() {
@@ -26,12 +28,28 @@ function getInitialUser() {
 export default function App() {
   const [currentUser, setCurrentUser] = useState(getInitialUser);
   const [isAuthOpen, setIsAuthOpen] = useState(false);
+  const [isRunnerModalOpen, setIsRunnerModalOpen] = useState(false);
+  const [runnerStatus, setRunnerStatus] = useState({ connected: false, info: null });
   const [sessions, setSessions] = useState([]);
   const [activeSessionId, setActiveSessionId] = useState(null);
   const [activeSession, setActiveSession] = useState(null);
   const [isLoading, setIsLoading] = useState(false);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const pollingRef = useRef(null);
+
+  // Poll runner status for current user / guest every 3 seconds
+  useEffect(() => {
+    let interval = null;
+    const checkRunner = async () => {
+      if (currentUser?.id) {
+        const res = await fetchRunnerStatus(currentUser.id);
+        setRunnerStatus(res);
+      }
+    };
+    checkRunner();
+    interval = setInterval(checkRunner, 3000);
+    return () => clearInterval(interval);
+  }, [currentUser?.id]);
 
   // 1. Load tasks belonging to current user / guest
   const loadSessions = async (userId = currentUser.id) => {
@@ -206,6 +224,8 @@ export default function App() {
         currentUser={currentUser}
         onOpenAuth={() => setIsAuthOpen(true)}
         onLogout={handleLogout}
+        runnerStatus={runnerStatus}
+        onOpenRunnerModal={() => setIsRunnerModalOpen(true)}
       />
 
       <ChatArea
@@ -214,6 +234,8 @@ export default function App() {
         onRefresh={handleRefresh}
         onToggleSidebar={() => setIsSidebarOpen(!isSidebarOpen)}
         isLoading={isLoading}
+        runnerStatus={runnerStatus}
+        onOpenRunnerModal={() => setIsRunnerModalOpen(true)}
       />
 
       <AuthModal
@@ -221,6 +243,13 @@ export default function App() {
         onClose={() => setIsAuthOpen(false)}
         onAuthSuccess={handleAuthSuccess}
         currentUserId={currentUser.id}
+      />
+
+      <RunnerModal
+        isOpen={isRunnerModalOpen}
+        onClose={() => setIsRunnerModalOpen(false)}
+        userId={currentUser.id}
+        runnerStatus={runnerStatus}
       />
     </div>
   );

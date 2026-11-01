@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Plus, Trash2, Search, Cpu, CheckCircle2, AlertCircle, Loader2, X, Terminal, User, LogIn, LogOut, ShieldCheck } from 'lucide-react';
+import { Plus, Trash2, Search, Cpu, CheckCircle2, AlertCircle, Loader2, X, Terminal, User, LogIn, LogOut, ShieldCheck, Laptop } from 'lucide-react';
 
 export default function Sidebar({
   sessions,
@@ -12,6 +12,8 @@ export default function Sidebar({
   currentUser,
   onOpenAuth,
   onLogout,
+  runnerStatus,
+  onOpenRunnerModal,
 }) {
   const [searchQuery, setSearchQuery] = useState('');
 
@@ -180,6 +182,31 @@ export default function Sidebar({
                 <LogOut className="w-3.5 h-3.5" />
               </button>
             )}
+          </div>
+
+          {/* Local Runner Status Card */}
+          <div 
+            onClick={onOpenRunnerModal}
+            className="bg-[#1c1c1c] p-2 rounded-xl border border-[#2a2a2a] cursor-pointer hover:border-[#3f3f46] transition"
+          >
+            <div className="flex items-center justify-between text-[11px] text-white font-medium mb-1">
+              <div className="flex items-center gap-1.5">
+                <Laptop className="w-3 h-3 text-[#60a5fa]" />
+                <span>Execution Target</span>
+              </div>
+              <span className={`w-1.5 h-1.5 rounded-full ${
+                runnerStatus?.connected ? 'bg-[#22c55e] animate-pulse' : 'bg-[#71717a]'
+              }`} />
+            </div>
+
+            <div className="flex justify-between items-center text-[10px]">
+              <span className={runnerStatus?.connected ? 'text-[#4ade80] font-mono' : 'text-[#737373]'}>
+                {runnerStatus?.connected ? 'Local Machine' : 'Cloud Sandbox'}
+              </span>
+              <span className="text-[#60a5fa] hover:underline">
+                {runnerStatus?.connected ? 'Settings' : 'Connect'}
+              </span>
+            </div>
           </div>
 
           {/* Model indicator */}
