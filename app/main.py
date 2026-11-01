@@ -11,7 +11,7 @@ from typing import List, Optional
 import uuid
 
 from app.db import init_db, get_session
-from app.agent import run_agent_loop
+from app.agent import run_agent_loop, handle_approval_decision
 from app.models import AgentSession, AgentStep, AgentSessionRead, SimpleUser
 from app.runner_manager import runner_manager
 
@@ -164,6 +164,29 @@ def send_follow_up_prompt(
 
     # Launch background agent loop with the follow-up prompt
     background_tasks.add_task(run_agent_loop, session_id, prompt)
+    return session_item
+
+# Human-in-the-Loop Safety Approval Endpoint
+@app.post("/api/sessions/{session_id}/approval", response_model=AgentSessionRead, tags=["Sessions"])
+def submit_approval(
+    session_id: uuid.UUID,
+    data: dict,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_session)
+):
+    """
+    Submits user decision ('approve' or 'reject') for a dangerous command intercepted by safety guardrails.
+    """
+    session_item = db.get(AgentSession, session_id)
+    if not session_item:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    decision = data.get("decision", "").lower().strip()
+    if decision not in ["approve", "reject"]:
+        raise HTTPException(status_code=400, detail="Decision must be 'approve' or 'reject'")
+
+    feedback = data.get("feedback")
+    background_tasks.add_task(handle_approval_decision, session_id, decision, feedback)
     return session_item
 
 # 3. Get all sessions (For sidebar history)

@@ -9,6 +9,8 @@ from app.db import engine
 from app.models import AgentSession, AgentStep
 from app.sandbox import execute_command
 from app.runner_manager import runner_manager
+from app.safety import check_command_safety
+from app.dev_tools import view_file_content, edit_file_content, grep_search_content
 from app.llm.base import BaseLLMProvider
 from app.llm.gemini_provider import GeminiProvider
 from app.llm.openai_compatible_provider import OpenAICompatibleProvider
@@ -52,31 +54,108 @@ def get_configured_router() -> LLMRouter:
 TOOLS_SCHEMA = [
     {
         "name": "run_terminal_command",
-        "description": "Executes a shell command in the terminal sandbox and returns the stdout and stderr output.",
+        "description": "Executes a shell command in the terminal sandbox (tests, package management, git, system commands).",
         "parameters": {
             "type": "object",
             "properties": {
                 "thought": {
                     "type": "string",
-                    "description": "Your internal step-by-step reasoning: why did you choose this specific command, what did previous outputs tell you, and what specific hypothesis or outcome are you testing?"
+                    "description": "Your internal step-by-step reasoning: why did you choose this command and what outcome do you expect?"
                 },
                 "command": {
                     "type": "string",
-                    "description": "The exact shell command line to execute (e.g., 'dir', 'python main.py', 'pip list')."
+                    "description": "The exact shell command line to execute (e.g. 'pytest', 'npm test', 'dir')."
                 }
             },
             "required": ["command", "thought"]
+        }
+    },
+    {
+        "name": "view_file",
+        "description": "Inspects the content of a file with line numbers. Use this before editing to inspect exact syntax and lines.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": "Relative or absolute path of the file to read."
+                },
+                "start_line": {
+                    "type": "integer",
+                    "description": "Optional starting line number (1-indexed)."
+                },
+                "end_line": {
+                    "type": "integer",
+                    "description": "Optional ending line number (inclusive)."
+                },
+                "thought": {
+                    "type": "string",
+                    "description": "Why you need to inspect this file and what you are looking for."
+                }
+            },
+            "required": ["path", "thought"]
+        }
+    },
+    {
+        "name": "edit_file",
+        "description": "Surgically replaces a unique code snippet with new code in a file and generates a visual Unified Diff. Always view the file first to copy the exact target snippet.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": "Path to the file to modify."
+                },
+                "target_string": {
+                    "type": "string",
+                    "description": "The exact existing code snippet to be replaced (including exact indentation and whitespace)."
+                },
+                "replacement_string": {
+                    "type": "string",
+                    "description": "The new replacement code snippet."
+                },
+                "thought": {
+                    "type": "string",
+                    "description": "Explanation of the code change and why it resolves the goal."
+                }
+            },
+            "required": ["path", "target_string", "replacement_string", "thought"]
+        }
+    },
+    {
+        "name": "grep_search",
+        "description": "Fast recursive search for keywords, functions, or imports across files in a directory.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "The text, function name, or keyword to search for."
+                },
+                "path": {
+                    "type": "string",
+                    "description": "Directory path to search in (defaults to '.')."
+                },
+                "thought": {
+                    "type": "string",
+                    "description": "Why you are searching for this term."
+                }
+            },
+            "required": ["query", "thought"]
         }
     }
 ]
 
 SYSTEM_INSTRUCTION = (
-    "You are an autonomous Terminal AI Agent running on Windows PowerShell. "
-    "Your job is to achieve the user's goal by executing terminal commands using the 'run_terminal_command' tool.\n"
-    "Crucial requirements:\n"
-    "1. In every tool call, formulate clear, thoughtful reasoning in the 'thought' argument explaining why you are running this command and what you expect to achieve.\n"
-    "2. Carefully inspect the terminal output after every command before deciding your next move.\n"
-    "3. When the goal is fully achieved, provide a concise summary of what was accomplished without calling any more tools."
+    "You are an elite Autonomous AI Coding & Terminal Agent. "
+    "Your job is to achieve the user's goal by combining structured developer tools and terminal commands.\n\n"
+    "TOOL USAGE BEST PRACTICES:\n"
+    "1. To read files: use 'view_file' with line numbers instead of 'cat' or 'type'.\n"
+    "2. To modify files: use 'edit_file' with the exact target snippet and replacement snippet. This produces clean unified diffs. Always view the file first!\n"
+    "3. To find code: use 'grep_search' across the directory.\n"
+    "4. To run tests, build, or check environment: use 'run_terminal_command'.\n"
+    "5. In every tool call, always provide clear reasoning in 'thought'.\n"
+    "6. When the goal is completed, provide a concise final summary without calling any more tools."
 )
 
 
@@ -216,25 +295,93 @@ def run_agent_loop(session_id: uuid.UUID, follow_up_prompt: Optional[str] = None
 
                 # Case 2: Agent requested tool calls
                 for tool_call in llm_response.tool_calls:
-                    steps_in_this_turn += 1
-                    current_step_number += 1
-                    command_to_run = tool_call.args.get("command", "")
-                    thought_content = tool_call.args.get("thought") or (llm_response.text.strip() if llm_response.text else None) or f"Executing '{command_to_run}' to progress toward goal."
+                    tool_name = tool_call.name
+                    thought_content = tool_call.args.get("thought") or (llm_response.text.strip() if llm_response.text else None) or "Executing tool to progress toward goal."
 
-                    print(f"[Agent] Step {current_step_number} [{env_label}]: Executing -> {command_to_run}")
+                    # 1. Shell Command Execution with Human-in-the-Loop Safety Guardrail
+                    if tool_name == "run_terminal_command":
+                        command_to_run = tool_call.args.get("command", "")
+                        is_dangerous, risk_reason = check_command_safety(command_to_run)
 
-                    # Route execution to local runner if connected, else cloud sandbox
-                    if has_local_runner:
-                        output, exit_code = runner_manager.execute_remote(user_id, command_to_run)
+                        if is_dangerous:
+                            print(f"[Security Guardrail] Intercepted dangerous command: {command_to_run} ({risk_reason})")
+                            session_item.status = "awaiting_approval"
+                            session_item.pending_command = command_to_run
+                            session_item.pending_thought = thought_content
+                            session_item.pending_risk = risk_reason
+                            db.add(session_item)
+                            db.commit()
+                            return  # Pause loop and wait for human decision
+
+                        steps_in_this_turn += 1
+                        current_step_number += 1
+                        print(f"[Agent] Step {current_step_number} [{env_label}]: Executing -> {command_to_run}")
+
+                        if has_local_runner:
+                            output, exit_code = runner_manager.execute_remote(user_id, command_to_run)
+                        else:
+                            output, exit_code = execute_command(command_to_run)
+
+                        step_command = command_to_run
+
+                    # 2. View File Content Tool
+                    elif tool_name == "view_file":
+                        steps_in_this_turn += 1
+                        current_step_number += 1
+                        file_path = tool_call.args.get("path", "")
+                        s_line = tool_call.args.get("start_line")
+                        e_line = tool_call.args.get("end_line")
+                        step_command = f"view_file {file_path}"
+                        if s_line or e_line:
+                            step_command += f" ({s_line or 1}-{e_line or 'end'})"
+
+                        print(f"[Agent] Step {current_step_number} [{env_label}]: Viewing file -> {file_path}")
+                        if has_local_runner:
+                            output, exit_code = runner_manager.execute_remote_tool(user_id, "view_file", {"path": file_path, "start_line": s_line, "end_line": e_line})
+                        else:
+                            output, exit_code = view_file_content(file_path, s_line, e_line)
+
+                    # 3. Edit File Content Tool (Unified Diff Generation)
+                    elif tool_name == "edit_file":
+                        steps_in_this_turn += 1
+                        current_step_number += 1
+                        file_path = tool_call.args.get("path", "")
+                        target = tool_call.args.get("target_string", "")
+                        replacement = tool_call.args.get("replacement_string", "")
+                        step_command = f"edit_file {file_path}"
+
+                        print(f"[Agent] Step {current_step_number} [{env_label}]: Editing file -> {file_path}")
+                        if has_local_runner:
+                            output, exit_code = runner_manager.execute_remote_tool(user_id, "edit_file", {"path": file_path, "target_string": target, "replacement_string": replacement})
+                        else:
+                            output, exit_code = edit_file_content(file_path, target, replacement)
+
+                    # 4. Grep Search Tool
+                    elif tool_name == "grep_search":
+                        steps_in_this_turn += 1
+                        current_step_number += 1
+                        query = tool_call.args.get("query", "")
+                        search_path = tool_call.args.get("path", ".")
+                        step_command = f"grep_search '{query}' in {search_path}"
+
+                        print(f"[Agent] Step {current_step_number} [{env_label}]: Searching -> '{query}'")
+                        if has_local_runner:
+                            output, exit_code = runner_manager.execute_remote_tool(user_id, "grep", {"query": query, "path": search_path})
+                        else:
+                            output, exit_code = grep_search_content(query, search_path)
+
                     else:
-                        output, exit_code = execute_command(command_to_run)
+                        steps_in_this_turn += 1
+                        current_step_number += 1
+                        step_command = f"tool {tool_name}"
+                        output, exit_code = f"Unknown tool: {tool_name}", 1
 
                     # Save step to database
                     step_record = AgentStep(
                         session_id=session_id,
                         step_number=current_step_number,
                         thought=thought_content,
-                        command=command_to_run,
+                        command=step_command,
                         output=output,
                         model_name=model_identifier,
                         routing_trace=routing_trace_json
@@ -245,11 +392,11 @@ def run_agent_loop(session_id: uuid.UUID, follow_up_prompt: Optional[str] = None
                     # Feed output back into message context for next loop
                     messages.append({
                         "role": "assistant",
-                        "content": f"I executed: {command_to_run}"
+                        "content": f"I executed: {step_command}"
                     })
                     messages.append({
                         "role": "user",
-                        "content": f"Terminal Output [Exit Code {exit_code}]:\n{output}"
+                        "content": f"Tool Output [Exit Code {exit_code}]:\n{output}"
                     })
 
             session_item.status = "completed"
@@ -261,3 +408,73 @@ def run_agent_loop(session_id: uuid.UUID, follow_up_prompt: Optional[str] = None
             session_item.status = "failed"
             db.add(session_item)
             db.commit()
+
+
+def handle_approval_decision(session_id: uuid.UUID, decision: str, feedback: Optional[str] = None):
+    """
+    Called when human approves or rejects an intercepted dangerous command.
+    If approved: executes the command and resumes autonomous agent loop.
+    If rejected: feeds rejection feedback into agent context and prompts agent to safely re-plan.
+    """
+    with Session(engine) as db:
+        session_item = db.get(AgentSession, session_id)
+        if not session_item or session_item.status != "awaiting_approval":
+            return
+
+        cmd = session_item.pending_command or ""
+        thought = session_item.pending_thought or ""
+        user_id = session_item.user_id or "guest"
+        has_local_runner = runner_manager.is_connected(user_id)
+
+        # Clear pending state
+        session_item.pending_command = None
+        session_item.pending_thought = None
+        session_item.pending_risk = None
+        session_item.status = "running"
+        db.add(session_item)
+        db.commit()
+
+        # Determine next step number
+        statement = select(AgentStep).where(AgentStep.session_id == session_id).order_by(AgentStep.step_number.desc())
+        last_step = db.exec(statement).first()
+        next_step_num = (last_step.step_number + 1) if last_step else 1
+
+        if decision == "approve":
+            print(f"[HITL Approved] Executing approved command: {cmd}")
+            if has_local_runner:
+                output, exit_code = runner_manager.execute_remote(user_id, cmd)
+                env_label = "Local Machine"
+            else:
+                output, exit_code = execute_command(cmd)
+                env_label = "Server Sandbox"
+
+            step_record = AgentStep(
+                session_id=session_id,
+                step_number=next_step_num,
+                thought=f"[Human Approved] {thought}",
+                command=cmd,
+                output=output,
+                model_name=f"Human-in-the-Loop Approved • {env_label}"
+            )
+            db.add(step_record)
+            db.commit()
+
+            # Resume agent loop to continue following turns
+            run_agent_loop(session_id)
+
+        else:  # Reject
+            print(f"[HITL Rejected] Command rejected: {cmd}")
+            rejection_msg = feedback.strip() if feedback and feedback.strip() else "Execution denied by user. Please propose a safer alternative or proceed without running this destructive command."
+            step_record = AgentStep(
+                session_id=session_id,
+                step_number=next_step_num,
+                thought="Destructive command rejected by human reviewer.",
+                command=f"blocked: {cmd}",
+                output=f"[Permission Denied by User]: {rejection_msg}",
+                model_name="Human-in-the-Loop Guardrail"
+            )
+            db.add(step_record)
+            db.commit()
+
+            # Resume agent loop with rejection feedback so agent re-plans safely
+            run_agent_loop(session_id, follow_up_prompt=f"The command '{cmd}' was REJECTED by the user with note: '{rejection_msg}'. Please adapt your plan safely.")

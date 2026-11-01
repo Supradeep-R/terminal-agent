@@ -59,6 +59,74 @@ def execute_local_command(command: str, timeout: int = 45):
         return f"[Error] Execution failed: {e}", -1
 
 
+def view_file_local(path: str, start_line=None, end_line=None):
+    import os
+    if not os.path.exists(path):
+        return f"[Error] File not found: {path}", 1
+    if os.path.isdir(path):
+        return f"[Error] Path is a directory: {path}", 1
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as f:
+            lines = f.readlines()
+        total = len(lines)
+        s = max(1, start_line or 1)
+        e = min(total, end_line or total)
+        out = [f"{i:4d} | {lines[i-1].rstrip()}" for i in range(s, e + 1)]
+        return f"--- {path} (Lines {s}-{e} of {total}) ---\n" + "\n".join(out), 0
+    except Exception as err:
+        return f"[Error reading file] {err}", 1
+
+
+def edit_file_local(path: str, target_string: str, replacement_string: str):
+    import os, difflib
+    if not os.path.exists(path):
+        return f"[Error] File not found: {path}", 1
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as f:
+            orig = f.read()
+        if target_string not in orig:
+            return f"[Error] Target string not found in '{path}'. Please view the file to check indentation.", 1
+        new_text = orig.replace(target_string, replacement_string, 1)
+        diff = list(difflib.unified_diff(
+            orig.splitlines(keepends=True),
+            new_text.splitlines(keepends=True),
+            fromfile=f"a/{path}",
+            tofile=f"b/{path}",
+            lineterm=""
+        ))
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(new_text)
+        return "\n".join(diff) if diff else "(No changes made)", 0
+    except Exception as err:
+        return f"[Error editing file] {err}", 1
+
+
+def grep_local(query: str, path: str = "."):
+    import os
+    if not os.path.exists(path):
+        return f"[Error] Path not found: {path}", 1
+    results = []
+    ignore = {".git", ".venv", "node_modules", "__pycache__", "dist", "build"}
+    for root, dirs, files in os.walk(path):
+        dirs[:] = [d for d in dirs if d not in ignore]
+        for file in files:
+            if file.endswith((".pyc", ".png", ".jpg", ".svg", ".ico", ".woff", ".woff2", ".map")):
+                continue
+            fp = os.path.join(root, file)
+            try:
+                with open(fp, "r", encoding="utf-8", errors="ignore") as f:
+                    for num, line in enumerate(f, 1):
+                        if query.lower() in line.lower():
+                            rel = os.path.relpath(fp, path)
+                            results.append(f"{rel}:{num}: {line.strip()[:140]}")
+                            if len(results) >= 40:
+                                results.append("... (reached limit of 40 matches)")
+                                return "\n".join(results), 0
+            except Exception:
+                continue
+    return "\n".join(results) if results else f"No matches found for '{query}'.", 0
+
+
 async def run_daemon(server_url: str, user_id: str):
     # Normalize server URL to ws:// or wss://
     clean_url = server_url.rstrip("/")
@@ -112,31 +180,40 @@ async def run_daemon(server_url: str, user_id: str):
                         data = json.loads(message)
                         msg_type = data.get("type")
 
+                        req_id = data.get("request_id")
+
                         if msg_type == "exec":
-                            req_id = data.get("request_id")
                             cmd = data.get("command", "")
                             timeout = data.get("timeout", 45)
-
                             print(f"\n>>> [COMMAND RECEIVED] > {cmd}")
                             start_time = time.time()
-
-                            # Run command locally
                             output, exit_code = execute_local_command(cmd, timeout=timeout)
                             elapsed = time.time() - start_time
-
                             status_str = f"Exit {exit_code}" if exit_code == 0 else f"Failed ({exit_code})"
                             print(f"<<< [COMPLETED in {elapsed:.2f}s] {status_str}")
-                            if output:
-                                print(f"--- Output preview (first 100 chars) ---\n{output[:100]}...\n---------------------------------------")
+                        elif msg_type == "view_file":
+                            path = data.get("path", "")
+                            print(f"\n>>> [VIEW FILE] > {path}")
+                            output, exit_code = view_file_local(path, data.get("start_line"), data.get("end_line"))
+                        elif msg_type == "edit_file":
+                            path = data.get("path", "")
+                            print(f"\n>>> [EDIT FILE (DIFF)] > {path}")
+                            output, exit_code = edit_file_local(path, data.get("target_string", ""), data.get("replacement_string", ""))
+                        elif msg_type == "grep":
+                            query = data.get("query", "")
+                            path = data.get("path", ".")
+                            print(f"\n>>> [GREP SEARCH] > '{query}' in {path}")
+                            output, exit_code = grep_local(query, path)
+                        else:
+                            output, exit_code = f"[Error] Unknown message type: {msg_type}", 1
 
-                            # Send response back to cloud agent
-                            response = {
-                                "type": "exec_result",
-                                "request_id": req_id,
-                                "output": output,
-                                "exit_code": exit_code
-                            }
-                            await ws.send(json.dumps(response))
+                        response = {
+                            "type": "exec_result",
+                            "request_id": req_id,
+                            "output": output,
+                            "exit_code": exit_code
+                        }
+                        await ws.send(json.dumps(response))
 
                     except Exception as e:
                         print(f"[!] [Error processing message] {e}")

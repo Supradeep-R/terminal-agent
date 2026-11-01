@@ -23,6 +23,9 @@ class AgentSession(SQLModel, table=True):
     user_id: Optional[str] = Field(default="guest", index=True)
     goal: str
     status: str = Field(default="Pending")
+    pending_command: Optional[str] = Field(default=None)
+    pending_thought: Optional[str] = Field(default=None)
+    pending_risk: Optional[str] = Field(default=None)
     created_at: datetime = Field(
         default_factory=lambda: datetime.now(timezone.utc)
     )
@@ -58,5 +61,8 @@ class AgentSessionRead(SQLModel):
     user_id: Optional[str] = "guest"
     goal: str
     status: str
+    pending_command: Optional[str] = None
+    pending_thought: Optional[str] = None
+    pending_risk: Optional[str] = None
     created_at: datetime
     steps: List[AgentStep] = []

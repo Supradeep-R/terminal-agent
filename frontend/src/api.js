@@ -71,3 +71,13 @@ export async function fetchRunnerStatus(userId) {
     return { connected: false };
   }
 }
+
+export async function submitApproval(sessionId, decision, feedback = '') {
+  const res = await fetch(`${API_BASE}/api/sessions/${sessionId}/approval`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ decision, feedback }),
+  });
+  if (!res.ok) throw new Error('Failed to submit approval');
+  return res.json();
+}

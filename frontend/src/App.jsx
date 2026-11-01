@@ -95,9 +95,9 @@ export default function App() {
 
     if (!activeSessionId) return;
 
-    const isRunning = activeSession?.status === 'running' || activeSession?.status === 'Pending';
+    const shouldPoll = activeSession?.status === 'running' || activeSession?.status === 'Pending' || activeSession?.status === 'awaiting_approval';
 
-    if (isRunning) {
+    if (shouldPoll) {
       pollingRef.current = setInterval(async () => {
         try {
           const updated = await fetchSessionDetails(activeSessionId);

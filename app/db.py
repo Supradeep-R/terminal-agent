@@ -44,6 +44,18 @@ def init_db():
                 except Exception:
                     pass
 
+        # Also ensure pending approval columns exist on sessions
+        for col, col_type in [("pending_command", "TEXT"), ("pending_thought", "TEXT"), ("pending_risk", "TEXT")]:
+            try:
+                conn.execute(text(f"ALTER TABLE sessions ADD COLUMN IF NOT EXISTS {col} {col_type}"))
+                conn.commit()
+            except Exception:
+                try:
+                    conn.execute(text(f"ALTER TABLE sessions ADD COLUMN {col} {col_type}"))
+                    conn.commit()
+                except Exception:
+                    pass
+
 def get_session():
     with Session(engine) as session:
         yield session

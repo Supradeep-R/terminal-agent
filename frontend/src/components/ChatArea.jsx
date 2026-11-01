@@ -1,7 +1,10 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { ArrowUp, Menu, RefreshCw, Loader2, Bot, Terminal, Copy, Check, Zap, AlertTriangle, Brain, Laptop } from 'lucide-react';
+import { ArrowUp, Menu, RefreshCw, Loader2, Bot, Terminal, Copy, Check, Zap, AlertTriangle, Brain, Laptop, FileCode, ShieldAlert } from 'lucide-react';
 import TerminalCard from './TerminalCard';
+import DiffViewerCard from './DiffViewerCard';
+import SafetyApprovalCard from './SafetyApprovalCard';
 import EmptyState from './EmptyState';
+import { submitApproval } from '../api';
 
 export default function ChatArea({
   activeSession,
@@ -14,12 +17,39 @@ export default function ChatArea({
 }) {
   const [inputText, setInputText] = useState('');
   const [copiedId, setCopiedId] = useState(null);
+  const [isApproving, setIsApproving] = useState(false);
   const messagesEndRef = useRef(null);
   const textareaRef = useRef(null);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [activeSession?.steps, activeSession?.status, isLoading]);
+
+  const handleApprove = async () => {
+    if (!activeSession?.id) return;
+    setIsApproving(true);
+    try {
+      await submitApproval(activeSession.id, 'approve');
+      onRefresh();
+    } catch (err) {
+      alert(`Approval error: ${err.message}`);
+    } finally {
+      setIsApproving(false);
+    }
+  };
+
+  const handleReject = async (feedback) => {
+    if (!activeSession?.id) return;
+    setIsApproving(true);
+    try {
+      await submitApproval(activeSession.id, 'reject', feedback);
+      onRefresh();
+    } catch (err) {
+      alert(`Rejection error: ${err.message}`);
+    } finally {
+      setIsApproving(false);
+    }
+  };
 
   const handleInputChange = (e) => {
     setInputText(e.target.value);
@@ -52,7 +82,8 @@ export default function ChatArea({
     setTimeout(() => setCopiedId(null), 2000);
   };
 
-  const isRunning = activeSession?.status === 'running' || activeSession?.status === 'Pending' || isLoading;
+  const isWaitingApproval = activeSession?.status === 'awaiting_approval';
+  const isRunning = (activeSession?.status === 'running' || activeSession?.status === 'Pending' || isLoading) && !isWaitingApproval;
 
   return (
     <main className="flex-1 flex flex-col h-screen bg-[#212121] overflow-hidden">
@@ -101,10 +132,15 @@ export default function ChatArea({
           {activeSession && (
             <div className="flex items-center gap-2 text-xs mr-2">
               <span className={`w-2 h-2 rounded-full ${
-                isRunning ? 'bg-[#3b82f6] animate-pulse' : 'bg-[#10a37f]'
+                isWaitingApproval
+                  ? 'bg-[#f59e0b] animate-ping'
+                  : isRunning
+                  ? 'bg-[#3b82f6] animate-pulse'
+                  : 'bg-[#10a37f]'
               }`} />
-              <span className="text-[#a3a3a3] capitalize font-medium">
-                {isRunning ? 'Running...' : activeSession.status || 'Ready'}
+              <span className={`capitalize font-medium ${isWaitingApproval ? 'text-[#facc15] font-bold flex items-center gap-1' : 'text-[#a3a3a3]'}`}>
+                {isWaitingApproval && <ShieldAlert className="w-3.5 h-3.5 text-[#f59e0b]" />}
+                {isWaitingApproval ? 'Needs Approval' : isRunning ? 'Running...' : activeSession.status || 'Ready'}
               </span>
             </div>
           )}
@@ -202,18 +238,37 @@ export default function ChatArea({
                   );
                 }
 
-                // 3. Terminal Execution Card
+                // 3. Diff Patch Card vs Terminal Execution Card
+                const isEditFile = step.command && step.command.startsWith('edit_file');
                 return (
                   <div key={step.id || idx} className="flex gap-3.5 my-2 px-2 sm:px-0">
                     <div className="w-8 h-8 rounded-full bg-[#1b1b1b] border border-[#333333] flex items-center justify-center shrink-0 shadow-sm mt-1">
-                      <Terminal className="w-4 h-4 text-[#60a5fa]" />
+                      {isEditFile ? (
+                        <FileCode className="w-4 h-4 text-[#38bdf8]" />
+                      ) : (
+                        <Terminal className="w-4 h-4 text-[#60a5fa]" />
+                      )}
                     </div>
                     <div className="flex-1 min-w-0">
-                      <TerminalCard step={step} />
+                      {isEditFile ? (
+                        <DiffViewerCard step={step} />
+                      ) : (
+                        <TerminalCard step={step} />
+                      )}
                     </div>
                   </div>
                 );
               })}
+
+              {/* Human-in-the-Loop Security Approval Card */}
+              {isWaitingApproval && (
+                <SafetyApprovalCard
+                  session={activeSession}
+                  onApprove={handleApprove}
+                  onReject={handleReject}
+                  isSubmitting={isApproving}
+                />
+              )}
 
               {/* Live Running Indicator */}
               {isRunning && (
