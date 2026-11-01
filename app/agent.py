@@ -34,7 +34,7 @@ def get_configured_router() -> LLMRouter:
             name="Groq",
             base_url="https://api.groq.com/openai/v1",
             api_key=groq_key,
-            model_name="llama-3.3-70b-versatile"
+            model_name="qwen/qwen3.8-27b"
         ))
 
     # 3. Fallback 2: OpenRouter
