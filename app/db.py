@@ -1,6 +1,7 @@
 import os
 from dotenv import load_dotenv
 from sqlmodel import create_engine, SQLModel, Session
+from sqlalchemy import text
 
 load_dotenv()
 
@@ -30,6 +31,18 @@ engine = get_engine()
 
 def init_db():
     SQLModel.metadata.create_all(engine)
+    # Ensure new columns exist across restarts and cloud PostgreSQL
+    with engine.connect() as conn:
+        for col, col_type in [("model_name", "VARCHAR"), ("routing_trace", "TEXT")]:
+            try:
+                conn.execute(text(f"ALTER TABLE steps ADD COLUMN IF NOT EXISTS {col} {col_type}"))
+                conn.commit()
+            except Exception:
+                try:
+                    conn.execute(text(f"ALTER TABLE steps ADD COLUMN {col} {col_type}"))
+                    conn.commit()
+                except Exception:
+                    pass
 
 def get_session():
     with Session(engine) as session:

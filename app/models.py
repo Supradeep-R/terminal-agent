@@ -44,6 +44,8 @@ class AgentStep(SQLModel, table=True):
     thought: Optional[str] = Field(default=None)
     command: str
     output: Optional[str] = Field(default=None)
+    model_name: Optional[str] = Field(default=None)
+    routing_trace: Optional[str] = Field(default=None)
     created_at: datetime = Field(
         default_factory=lambda: datetime.now(timezone.utc)
     )

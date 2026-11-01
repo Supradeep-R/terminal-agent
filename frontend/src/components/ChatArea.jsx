@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { ArrowUp, Menu, RefreshCw, Loader2, Bot, Terminal, Copy, Check } from 'lucide-react';
+import { ArrowUp, Menu, RefreshCw, Loader2, Bot, Terminal, Copy, Check, Zap, AlertTriangle, Brain } from 'lucide-react';
 import TerminalCard from './TerminalCard';
 import EmptyState from './EmptyState';
 
@@ -123,12 +123,41 @@ export default function ChatArea({
 
                 // 2. Final AI Text Response
                 if (step.command === 'response') {
+                  let parsedTrace = [];
+                  try {
+                    if (step.routing_trace) {
+                      parsedTrace = typeof step.routing_trace === 'string' ? JSON.parse(step.routing_trace) : step.routing_trace;
+                    }
+                  } catch (e) {
+                    parsedTrace = [];
+                  }
+                  const failedAttempt = Array.isArray(parsedTrace) ? parsedTrace.find(t => t.status === 'failed') : null;
+
                   return (
                     <div key={step.id || idx} className="flex gap-3.5 my-4 px-2 sm:px-0">
                       <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-[#10a37f] to-[#3b82f6] flex items-center justify-center shrink-0 shadow-sm mt-0.5">
                         <Bot className="w-4 h-4 text-white" />
                       </div>
-                      <div className="flex-1 min-w-0 bg-[#1a1a1a] p-4 rounded-xl border border-[#333333] text-sm text-[#e5e5e5] leading-relaxed relative group">
+                      <div className="flex-1 min-w-0 bg-[#1a1a1a] p-4 rounded-xl border border-[#333333] text-sm text-[#e5e5e5] leading-relaxed relative group space-y-2.5">
+                        {/* Fallback Notice if triggered */}
+                        {failedAttempt && (
+                          <div className="rounded-lg bg-[#451a03]/80 border border-[#b45309]/50 p-2.5 text-xs text-[#fed7aa] flex items-start gap-2">
+                            <AlertTriangle className="w-4 h-4 text-[#fbbf24] shrink-0 mt-0.5" />
+                            <div className="text-[11px] leading-relaxed">
+                              <span className="font-semibold text-white">⚡ Fallback Router: </span>
+                              Primary model <span className="underline">{failedAttempt.provider}</span> {failedAttempt.is_rate_limit ? 'hit API rate limit (429)' : 'failed'}, switched automatically to <span className="underline font-semibold text-emerald-300">{step.model_name}</span>.
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Model Badge */}
+                        {step.model_name && (
+                          <div className="flex items-center gap-1.5 text-[11px] text-[#9ca3af] font-mono pb-1 border-b border-[#2b2b2b]">
+                            <Zap className="w-3 h-3 text-[#38bdf8]" />
+                            <span>Response synthesized by: <strong className="text-white">{step.model_name}</strong></span>
+                          </div>
+                        )}
+
                         <div className="whitespace-pre-wrap font-sans">
                           {step.output}
                         </div>

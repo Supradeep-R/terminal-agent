@@ -11,6 +11,7 @@ class LLMResponse(BaseModel):
     tool_calls: List[ToolCall] = []
     provider_name: str
     model_name: str
+    routing_trace: List[Dict[str, Any]] = []
 
 class BaseLLMProvider(ABC):
     def __init__(self, name: str, model_name: str, api_key: str):

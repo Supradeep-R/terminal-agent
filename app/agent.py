@@ -1,4 +1,5 @@
 import os
+import json
 import uuid
 from typing import List, Dict, Any, Optional
 from dotenv import load_dotenv
@@ -54,21 +55,27 @@ TOOLS_SCHEMA = [
         "parameters": {
             "type": "object",
             "properties": {
+                "thought": {
+                    "type": "string",
+                    "description": "Your internal step-by-step reasoning: why did you choose this specific command, what did previous outputs tell you, and what specific hypothesis or outcome are you testing?"
+                },
                 "command": {
                     "type": "string",
                     "description": "The exact shell command line to execute (e.g., 'dir', 'python main.py', 'pip list')."
                 }
             },
-            "required": ["command"]
+            "required": ["command", "thought"]
         }
     }
 ]
 
 SYSTEM_INSTRUCTION = (
     "You are an autonomous Terminal AI Agent running on Windows PowerShell. "
-    "Your job is to achieve the user's goal by executing terminal commands using the 'run_terminal_command' tool. "
-    "Carefully inspect the terminal output after every command before deciding your next move. "
-    "When the goal is fully achieved, provide a concise summary of what was accomplished without calling any more tools."
+    "Your job is to achieve the user's goal by executing terminal commands using the 'run_terminal_command' tool.\n"
+    "Crucial requirements:\n"
+    "1. In every tool call, formulate clear, thoughtful reasoning in the 'thought' argument explaining why you are running this command and what you expect to achieve.\n"
+    "2. Carefully inspect the terminal output after every command before deciding your next move.\n"
+    "3. When the goal is fully achieved, provide a concise summary of what was accomplished without calling any more tools."
 )
 
 
@@ -160,6 +167,9 @@ def run_agent_loop(session_id: uuid.UUID, follow_up_prompt: Optional[str] = None
                     tools=TOOLS_SCHEMA
                 )
 
+                routing_trace_json = json.dumps(llm_response.routing_trace) if getattr(llm_response, "routing_trace", None) else None
+                model_identifier = f"{llm_response.provider_name} ({llm_response.model_name})"
+
                 # Case 1: No tool calls -> Agent finished this turn
                 if not llm_response.tool_calls:
                     print(f"[Agent] Turn Complete. Final Answer: {llm_response.text}")
@@ -168,9 +178,11 @@ def run_agent_loop(session_id: uuid.UUID, follow_up_prompt: Optional[str] = None
                         step_record = AgentStep(
                             session_id=session_id,
                             step_number=current_step_number,
-                            thought=f"Final Answer from {llm_response.provider_name}",
+                            thought="Synthesized final summary and verified goal accomplishment.",
                             command="response",
-                            output=llm_response.text
+                            output=llm_response.text,
+                            model_name=model_identifier,
+                            routing_trace=routing_trace_json
                         )
                         db.add(step_record)
                         db.commit()
@@ -181,18 +193,21 @@ def run_agent_loop(session_id: uuid.UUID, follow_up_prompt: Optional[str] = None
                     steps_in_this_turn += 1
                     current_step_number += 1
                     command_to_run = tool_call.args.get("command", "")
+                    thought_content = tool_call.args.get("thought") or (llm_response.text.strip() if llm_response.text else None) or f"Executing '{command_to_run}' to progress toward goal."
 
                     print(f"[Agent] Step {current_step_number}: Executing -> {command_to_run}")
 
                     output, exit_code = execute_command(command_to_run)
 
-                    # Save step to Supabase
+                    # Save step to database
                     step_record = AgentStep(
                         session_id=session_id,
                         step_number=current_step_number,
-                        thought=f"Invoked {tool_call.name} using {llm_response.provider_name}",
+                        thought=thought_content,
                         command=command_to_run,
-                        output=output
+                        output=output,
+                        model_name=model_identifier,
+                        routing_trace=routing_trace_json
                     )
                     db.add(step_record)
                     db.commit()
