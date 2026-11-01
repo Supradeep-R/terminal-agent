@@ -86,14 +86,20 @@ def build_conversation_history(db: Session, session_item: AgentSession, follow_u
     past_steps = db.exec(statement).all()
 
     for step in past_steps:
-        messages.append({
-            "role": "assistant",
-            "content": f"Executed: {step.command}"
-        })
-        messages.append({
-            "role": "user",
-            "content": f"Terminal Output:\n{step.output}"
-        })
+        if step.command == "response":
+            messages.append({
+                "role": "assistant",
+                "content": step.output or ""
+            })
+        else:
+            messages.append({
+                "role": "assistant",
+                "content": f"Executed: {step.command}"
+            })
+            messages.append({
+                "role": "user",
+                "content": f"Terminal Output:\n{step.output}"
+            })
 
     # If this is a follow-up turn in the ongoing chat
     if follow_up_prompt and follow_up_prompt.strip():
@@ -138,6 +144,17 @@ def run_agent_loop(session_id: uuid.UUID, follow_up_prompt: Optional[str] = None
                 # Case 1: No tool calls -> Agent finished this turn
                 if not llm_response.tool_calls:
                     print(f"[Agent] Turn Complete. Final Answer: {llm_response.text}")
+                    if llm_response.text:
+                        current_step_number += 1
+                        step_record = AgentStep(
+                            session_id=session_id,
+                            step_number=current_step_number,
+                            thought=f"Final Answer from {llm_response.provider_name}",
+                            command="response",
+                            output=llm_response.text
+                        )
+                        db.add(step_record)
+                        db.commit()
                     break
 
                 # Case 2: Agent requested tool calls

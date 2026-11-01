@@ -6,16 +6,27 @@ load_dotenv()
 
 DATABASE_URL = os.getenv("DATABASE_URL")
 
-if not DATABASE_URL:
-    raise ValueError("DATABASE_URL Environment variable is not set")
+def get_engine():
+    if not DATABASE_URL:
+        print("[DB Warning] DATABASE_URL not set. Falling back to local SQLite: sqlite:///./terminal_agent.db")
+        return create_engine("sqlite:///./terminal_agent.db", connect_args={"check_same_thread": False})
+    
+    try:
+        eng = create_engine(
+            DATABASE_URL,
+            pool_pre_ping=True,
+            pool_recycle=300
+        )
+        # Test connection
+        with eng.connect() as conn:
+            pass
+        return eng
+    except Exception as e:
+        print(f"[DB Warning] Could not connect to remote PostgreSQL ({e}).")
+        print("Falling back to local SQLite database (terminal_agent.db) so the app continues running!")
+        return create_engine("sqlite:///./terminal_agent.db", connect_args={"check_same_thread": False})
 
-# pool_pre_ping=True tests connection liveness before every query,
-# preventing "SSL connection closed unexpectedly" errors from idle Supabase connections.
-engine = create_engine(
-    DATABASE_URL,
-    pool_pre_ping=True,
-    pool_recycle=300
-)
+engine = get_engine()
 
 def init_db():
     SQLModel.metadata.create_all(engine)

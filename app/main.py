@@ -1,4 +1,7 @@
+import os
 from fastapi import FastAPI, Depends, HTTPException, BackgroundTasks
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from contextlib import asynccontextmanager
 from sqlmodel import Session, select
 from typing import List
@@ -23,9 +26,18 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-@app.get("/")
-def read_root():
-    return {"message": "Hello from Terminal Agent API!"}
+# Enable CORS for frontend development and deployment
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+@app.get("/api/health", tags=["System"])
+def health_check():
+    return {"status": "ok", "message": "Terminal Agent API running"}
 
 # 1. Create a new session (Start a new task)
 @app.post("/api/sessions", response_model=AgentSession, tags=["Sessions"])
@@ -94,3 +106,23 @@ def get_session_detail(session_id: uuid.UUID, db: Session = Depends(get_session)
     if not session_item:
         raise HTTPException(status_code=404, detail="Session item not found")
     return session_item
+
+# 5. Delete a session
+@app.delete("/api/sessions/{session_id}", tags=["Sessions"])
+def delete_session(session_id: uuid.UUID, db: Session = Depends(get_session)):
+    """Deletes a session and all its steps."""
+    session_item = db.get(AgentSession, session_id)
+    if not session_item:
+        raise HTTPException(status_code=404, detail="Session not found")
+    db.delete(session_item)
+    db.commit()
+    return {"message": "Session deleted successfully"}
+
+# 6. Serve React Frontend in production if built
+frontend_dist = os.path.join(os.path.dirname(os.path.dirname(__file__)), "frontend", "dist")
+if os.path.exists(frontend_dist):
+    app.mount("/", StaticFiles(directory=frontend_dist, html=True), name="frontend")
+else:
+    @app.get("/")
+    def read_root():
+        return {"message": "Terminal Agent API running. Frontend not built yet."}
