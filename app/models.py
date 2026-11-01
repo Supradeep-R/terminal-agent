@@ -39,3 +39,11 @@ class AgentStep(SQLModel, table = True):
     )
 
     session: AgentSession = Relationship(back_populates= "steps")
+
+# Pydantic / SQLModel Read Schema including relationships
+class AgentSessionRead(SQLModel):
+    id: uuid.UUID
+    goal: str
+    status: str
+    created_at: datetime
+    steps: List[AgentStep] = []

@@ -86,7 +86,12 @@ def build_conversation_history(db: Session, session_item: AgentSession, follow_u
     past_steps = db.exec(statement).all()
 
     for step in past_steps:
-        if step.command == "response":
+        if step.command == "user_prompt":
+            messages.append({
+                "role": "user",
+                "content": step.output or ""
+            })
+        elif step.command == "response":
             messages.append({
                 "role": "assistant",
                 "content": step.output or ""
@@ -101,8 +106,8 @@ def build_conversation_history(db: Session, session_item: AgentSession, follow_u
                 "content": f"Terminal Output:\n{step.output}"
             })
 
-    # If this is a follow-up turn in the ongoing chat
-    if follow_up_prompt and follow_up_prompt.strip():
+    # If this is a follow-up turn in the ongoing chat and not already in past_steps
+    if follow_up_prompt and follow_up_prompt.strip() and not any(s.command == "user_prompt" and s.output == follow_up_prompt.strip() for s in past_steps):
         messages.append({
             "role": "user",
             "content": follow_up_prompt.strip()
@@ -122,6 +127,19 @@ def run_agent_loop(session_id: uuid.UUID, follow_up_prompt: Optional[str] = None
         session_item.status = "running"
         db.add(session_item)
         db.commit()
+
+        # If this is a follow-up prompt, record it as a step so the conversation thread remembers it
+        if follow_up_prompt and follow_up_prompt.strip():
+            current_step_number += 1
+            user_step = AgentStep(
+                session_id=session_id,
+                step_number=current_step_number,
+                thought="User Follow-up",
+                command="user_prompt",
+                output=follow_up_prompt.strip()
+            )
+            db.add(user_step)
+            db.commit()
 
         # Reconstruct full multi-turn history from DB
         messages = build_conversation_history(db, session_item, follow_up_prompt)

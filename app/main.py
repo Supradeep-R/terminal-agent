@@ -9,7 +9,7 @@ import uuid
 
 from app.db import init_db, get_session
 from app.agent import run_agent_loop
-from app.models import AgentSession, AgentStep
+from app.models import AgentSession, AgentStep, AgentSessionRead
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -40,8 +40,8 @@ def health_check():
     return {"status": "ok", "message": "Terminal Agent API running"}
 
 # 1. Create a new session (Start a new task)
-@app.post("/api/sessions", response_model=AgentSession, tags=["Sessions"])
-@app.post("/api/session", response_model=AgentSession, include_in_schema=False)
+@app.post("/api/sessions", response_model=AgentSessionRead, tags=["Sessions"])
+@app.post("/api/session", response_model=AgentSessionRead, include_in_schema=False)
 def create_session(
     goal_data: dict,
     background_tasks: BackgroundTasks,
@@ -64,7 +64,7 @@ def create_session(
     return new_session
 
 # 2. Multi-Turn Follow-up Prompt (Continue conversation in same session)
-@app.post("/api/sessions/{session_id}/prompt", response_model=AgentSession, tags=["Sessions"])
+@app.post("/api/sessions/{session_id}/prompt", response_model=AgentSessionRead, tags=["Sessions"])
 def send_follow_up_prompt(
     session_id: uuid.UUID,
     prompt_data: dict,
@@ -98,8 +98,8 @@ def get_sessions(db: Session = Depends(get_session)):
     return results.all()
 
 # 4. Get a particular session details and steps
-@app.get("/api/sessions/{session_id}", response_model=AgentSession, tags=["Sessions"])
-@app.get("/api/session/{session_id}", response_model=AgentSession, include_in_schema=False)
+@app.get("/api/sessions/{session_id}", response_model=AgentSessionRead, tags=["Sessions"])
+@app.get("/api/session/{session_id}", response_model=AgentSessionRead, include_in_schema=False)
 def get_session_detail(session_id: uuid.UUID, db: Session = Depends(get_session)):
     """Returns session details including all recorded steps and outputs."""
     session_item = db.get(AgentSession, session_id)

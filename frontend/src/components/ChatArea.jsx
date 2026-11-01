@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { ArrowUp, Menu, RefreshCw, Loader2, Sparkles, Terminal } from 'lucide-react';
-import MessageItem from './MessageItem';
+import { ArrowUp, Menu, RefreshCw, Loader2, Bot, Terminal, Copy, Check } from 'lucide-react';
+import TerminalCard from './TerminalCard';
 import EmptyState from './EmptyState';
 
 export default function ChatArea({
@@ -11,15 +11,14 @@ export default function ChatArea({
   isLoading,
 }) {
   const [inputText, setInputText] = useState('');
+  const [copiedId, setCopiedId] = useState(null);
   const messagesEndRef = useRef(null);
   const textareaRef = useRef(null);
 
-  // Auto-scroll to bottom on new steps or status change
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [activeSession?.steps, activeSession?.status, isLoading]);
 
-  // Auto-resize textarea
   const handleInputChange = (e) => {
     setInputText(e.target.value);
     if (textareaRef.current) {
@@ -30,7 +29,7 @@ export default function ChatArea({
 
   const handleSubmit = (e) => {
     e?.preventDefault();
-    if (!inputText.trim() || isLoading) return;
+    if (!inputText.trim() || isRunning) return;
     onSendMessage(inputText.trim());
     setInputText('');
     if (textareaRef.current) {
@@ -45,23 +44,11 @@ export default function ChatArea({
     }
   };
 
-  // Convert activeSession into sequential turns
-  const messages = [];
-  if (activeSession) {
-    // 1. Initial user goal
-    messages.push({
-      type: 'user',
-      content: activeSession.goal,
-    });
-
-    // 2. Assistant turn with all steps
-    if (activeSession.steps && activeSession.steps.length > 0) {
-      messages.push({
-        type: 'assistant',
-        steps: activeSession.steps,
-      });
-    }
-  }
+  const handleCopyText = (text, id) => {
+    navigator.clipboard.writeText(text);
+    setCopiedId(id);
+    setTimeout(() => setCopiedId(null), 2000);
+  };
 
   const isRunning = activeSession?.status === 'running' || activeSession?.status === 'Pending' || isLoading;
 
@@ -113,10 +100,66 @@ export default function ChatArea({
           {!activeSession ? (
             <EmptyState onSelectPrompt={(prompt) => onSendMessage(prompt)} />
           ) : (
-            <div className="flex-1 space-y-2">
-              {messages.map((item, idx) => (
-                <MessageItem key={idx} item={item} />
-              ))}
+            <div className="flex-1 space-y-4">
+              {/* Turn 1 Initial User Goal */}
+              <div className="flex justify-end my-3 px-2 sm:px-0">
+                <div className="max-w-[85%] sm:max-w-xl bg-[#2f2f2f] text-white px-4 py-3 rounded-2xl rounded-tr-sm text-sm leading-relaxed shadow-sm border border-[#3d3d3d]">
+                  {activeSession.goal}
+                </div>
+              </div>
+
+              {/* Steps and Responses */}
+              {activeSession.steps && activeSession.steps.map((step, idx) => {
+                // 1. Follow-up User Message
+                if (step.command === 'user_prompt') {
+                  return (
+                    <div key={step.id || idx} className="flex justify-end my-3 px-2 sm:px-0">
+                      <div className="max-w-[85%] sm:max-w-xl bg-[#2f2f2f] text-white px-4 py-3 rounded-2xl rounded-tr-sm text-sm leading-relaxed shadow-sm border border-[#3d3d3d]">
+                        {step.output}
+                      </div>
+                    </div>
+                  );
+                }
+
+                // 2. Final AI Text Response
+                if (step.command === 'response') {
+                  return (
+                    <div key={step.id || idx} className="flex gap-3.5 my-4 px-2 sm:px-0">
+                      <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-[#10a37f] to-[#3b82f6] flex items-center justify-center shrink-0 shadow-sm mt-0.5">
+                        <Bot className="w-4 h-4 text-white" />
+                      </div>
+                      <div className="flex-1 min-w-0 bg-[#1a1a1a] p-4 rounded-xl border border-[#333333] text-sm text-[#e5e5e5] leading-relaxed relative group">
+                        <div className="whitespace-pre-wrap font-sans">
+                          {step.output}
+                        </div>
+                        <button
+                          onClick={() => handleCopyText(step.output, step.id || idx)}
+                          title="Copy response"
+                          className="absolute top-3 right-3 p-1.5 rounded-lg bg-[#2b2b2b] hover:bg-[#383838] text-[#9ca3af] hover:text-white transition opacity-0 group-hover:opacity-100"
+                        >
+                          {copiedId === (step.id || idx) ? (
+                            <Check className="w-3.5 h-3.5 text-green-400" />
+                          ) : (
+                            <Copy className="w-3.5 h-3.5" />
+                          )}
+                        </button>
+                      </div>
+                    </div>
+                  );
+                }
+
+                // 3. Terminal Execution Card
+                return (
+                  <div key={step.id || idx} className="flex gap-3.5 my-2 px-2 sm:px-0">
+                    <div className="w-8 h-8 rounded-full bg-[#1b1b1b] border border-[#333333] flex items-center justify-center shrink-0 shadow-sm mt-1">
+                      <Terminal className="w-4 h-4 text-[#60a5fa]" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <TerminalCard step={step} />
+                    </div>
+                  </div>
+                );
+              })}
 
               {/* Live Running Indicator */}
               {isRunning && (
@@ -152,7 +195,7 @@ export default function ChatArea({
               onKeyDown={handleKeyDown}
               placeholder={
                 activeSession
-                  ? 'Send a follow-up instruction (e.g. "Now run the script")...'
+                  ? 'Send a follow-up instruction (e.g. "Now delete the temp file")...'
                   : 'Ask Terminal Agent to run commands or solve a task...'
               }
               className="w-full bg-transparent text-white text-sm placeholder-[#8e8e8e] resize-none focus:outline-none max-h-40 py-2 pr-10 leading-relaxed font-sans"
