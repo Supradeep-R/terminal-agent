@@ -38,10 +38,11 @@ class OpenAICompatibleProvider(BaseLLMProvider):
         kwargs = {
             "model": self.model_name,
             "messages": formatted_messages,
-            "temperature": 0.2,
+            "temperature": 0.1,
         }
         if openai_tools:
             kwargs["tools"] = openai_tools
+            kwargs["tool_choice"] = "auto"
 
         response = self.client.chat.completions.create(**kwargs)
         choice = response.choices[0].message

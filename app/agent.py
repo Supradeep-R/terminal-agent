@@ -1,4 +1,5 @@
 import os
+import re
 import json
 import uuid
 from typing import List, Dict, Any, Optional
@@ -11,7 +12,7 @@ from app.sandbox import execute_command
 from app.runner_manager import runner_manager
 from app.safety import check_command_safety
 from app.dev_tools import view_file_content, edit_file_content, grep_search_content
-from app.llm.base import BaseLLMProvider
+from app.llm.base import BaseLLMProvider, ToolCall
 from app.llm.gemini_provider import GeminiProvider
 from app.llm.openai_compatible_provider import OpenAICompatibleProvider
 from app.llm.router import LLMRouter
@@ -33,7 +34,7 @@ def get_configured_router() -> LLMRouter:
             name="Groq",
             base_url="https://api.groq.com/openai/v1",
             api_key=groq_key,
-            model_name="qwen/qwen3.8-27b"
+            model_name="llama-3.3-70b-versatile"
         ))
 
     # 3. Fallback 2: OpenRouter
@@ -156,7 +157,8 @@ SYSTEM_INSTRUCTION = (
     "4. To run tests, build, or check environment: use 'run_terminal_command'.\n"
     "5. In every tool call, always provide clear reasoning in 'thought'.\n"
     "6. When the goal is completed, provide a concise final summary without calling any more tools.\n"
-    "7. STRICT NON-INTERACTIVE COMMANDS: Never execute interactive commands or commands that prompt for human input. In PowerShell, ALWAYS separate multiple statements with semicolons ';' (e.g. '$folder = ...; Set-Content ...'). For cmdlets like Join-Path, always supply both -Path and -ChildPath explicitly (e.g. Join-Path -Path $folder -ChildPath 'file.txt') so it never pauses to ask for input."
+    "7. STRICT NON-INTERACTIVE COMMANDS: Never execute interactive commands or commands that prompt for human input. In PowerShell, ALWAYS separate multiple statements with semicolons ';' (e.g. '$folder = ...; Set-Content ...'). For cmdlets like Join-Path, always supply both -Path and -ChildPath explicitly (e.g. Join-Path -Path $folder -ChildPath 'file.txt') so it never pauses to ask for input.\n"
+    "8. MANDATORY TOOL INVOCATION: NEVER pretend to execute commands in conversational text (e.g. never say 'Executed: <command>', 'I deleted...', or output raw terminal commands without calling a tool). To perform any action on files, directories, or processes, you MUST invoke the structured 'run_terminal_command', 'edit_file', or 'view_file' tool. Conversational text is ONLY for final summaries after all tool calls have executed."
 )
 
 # Set of sessions requested to stop immediately
@@ -202,11 +204,11 @@ def build_conversation_history(db: Session, session_item: AgentSession, follow_u
         else:
             messages.append({
                 "role": "assistant",
-                "content": f"Executed: {step.command}"
+                "content": f"Invoked tool: {step.command}"
             })
             messages.append({
                 "role": "user",
-                "content": f"Terminal Output:\n{step.output}"
+                "content": f"Tool Execution Result:\n{step.output}"
             })
 
     # If this is a follow-up turn in the ongoing chat and not already in past_steps
@@ -299,6 +301,21 @@ def run_agent_loop(session_id: uuid.UUID, follow_up_prompt: Optional[str] = None
 
                 routing_trace_json = json.dumps(llm_response.routing_trace) if getattr(llm_response, "routing_trace", None) else None
                 model_identifier = f"{llm_response.provider_name} ({llm_response.model_name}) • {env_label}"
+
+                # Safety Guard: If no tool calls were generated but the model hallucinated executing a command in text
+                if not llm_response.tool_calls and llm_response.text:
+                    trimmed_text = llm_response.text.strip()
+                    exec_match = re.search(r"^(?:Executed|I executed|Running):\s*`?([^\n`]+)`?", trimmed_text, re.IGNORECASE)
+                    if exec_match:
+                        extracted_cmd = exec_match.group(1).strip()
+                        if extracted_cmd:
+                            print(f"[Agent Guard] Intercepted text command hallucination, converting to tool call: {extracted_cmd}")
+                            llm_response.tool_calls = [
+                                ToolCall(
+                                    name="run_terminal_command",
+                                    args={"command": extracted_cmd, "thought": "Executing command to accomplish requested action."}
+                                )
+                            ]
 
                 # Case 1: No tool calls -> Agent finished this turn
                 if not llm_response.tool_calls:
