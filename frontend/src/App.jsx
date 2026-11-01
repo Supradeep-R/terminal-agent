@@ -136,10 +136,21 @@ export default function App() {
         setActiveSessionId(newSession.id);
         setActiveSession(newSession);
       } else {
-        await sendPrompt(activeSessionId, text);
+        const updated = await sendPrompt(activeSessionId, text);
         setActiveSession(prev => ({
-          ...prev,
+          ...(updated || prev),
           status: 'running',
+          steps: (updated?.steps && updated.steps.length > 0)
+            ? updated.steps
+            : [
+                ...(prev?.steps || []),
+                {
+                  id: 'optimistic-' + Date.now(),
+                  command: 'user_prompt',
+                  output: text,
+                  step_number: (prev?.steps?.length || 0) + 1,
+                }
+              ]
         }));
       }
     } catch (err) {

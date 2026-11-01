@@ -106,6 +106,24 @@ def send_follow_up_prompt(
     if not prompt:
         raise HTTPException(status_code=400, detail="Prompt cannot be empty")
 
+    # Determine next step number and record user prompt step immediately
+    statement = select(AgentStep).where(AgentStep.session_id == session_id).order_by(AgentStep.step_number.desc())
+    last_step = db.exec(statement).first()
+    next_step_num = (last_step.step_number + 1) if last_step else 1
+
+    user_step = AgentStep(
+        session_id=session_id,
+        step_number=next_step_num,
+        thought="User Follow-up",
+        command="user_prompt",
+        output=prompt
+    )
+    db.add(user_step)
+    session_item.status = "running"
+    db.add(session_item)
+    db.commit()
+    db.refresh(session_item)
+
     # Launch background agent loop with the follow-up prompt
     background_tasks.add_task(run_agent_loop, session_id, prompt)
     return session_item

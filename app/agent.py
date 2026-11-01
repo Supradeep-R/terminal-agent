@@ -128,26 +128,27 @@ def run_agent_loop(session_id: uuid.UUID, follow_up_prompt: Optional[str] = None
         db.add(session_item)
         db.commit()
 
-        # If this is a follow-up prompt, record it as a step so the conversation thread remembers it
-        if follow_up_prompt and follow_up_prompt.strip():
-            current_step_number += 1
-            user_step = AgentStep(
-                session_id=session_id,
-                step_number=current_step_number,
-                thought="User Follow-up",
-                command="user_prompt",
-                output=follow_up_prompt.strip()
-            )
-            db.add(user_step)
-            db.commit()
-
-        # Reconstruct full multi-turn history from DB
-        messages = build_conversation_history(db, session_item, follow_up_prompt)
-
-        # Determine starting step number
+        # Determine starting step number first
         statement = select(AgentStep).where(AgentStep.session_id == session_id).order_by(AgentStep.step_number.desc())
         last_step = db.exec(statement).first()
         current_step_number = last_step.step_number if last_step else 0
+
+        # If this is a follow-up prompt, ensure it's recorded if not already saved
+        if follow_up_prompt and follow_up_prompt.strip():
+            if not last_step or last_step.command != "user_prompt" or last_step.output != follow_up_prompt.strip():
+                current_step_number += 1
+                user_step = AgentStep(
+                    session_id=session_id,
+                    step_number=current_step_number,
+                    thought="User Follow-up",
+                    command="user_prompt",
+                    output=follow_up_prompt.strip()
+                )
+                db.add(user_step)
+                db.commit()
+
+        # Reconstruct full multi-turn history from DB
+        messages = build_conversation_history(db, session_item, follow_up_prompt)
 
         steps_in_this_turn = 0
 
