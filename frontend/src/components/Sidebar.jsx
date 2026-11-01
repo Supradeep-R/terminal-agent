@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Plus, MessageSquare, Trash2, Search, Cpu, CheckCircle2, AlertCircle, Loader2, X, Terminal } from 'lucide-react';
+import { Plus, Trash2, Search, Cpu, CheckCircle2, AlertCircle, Loader2, X, Terminal, User, LogIn, LogOut, ShieldCheck } from 'lucide-react';
 
 export default function Sidebar({
   sessions,
@@ -9,6 +9,9 @@ export default function Sidebar({
   onDeleteSession,
   isOpen,
   onClose,
+  currentUser,
+  onOpenAuth,
+  onLogout,
 }) {
   const [searchQuery, setSearchQuery] = useState('');
 
@@ -65,7 +68,7 @@ export default function Sidebar({
           </button>
 
           {/* Search bar if multiple sessions */}
-          {sessions.length > 3 && (
+          {sessions.length > 2 && (
             <div className="mt-3 relative">
               <Search className="w-3.5 h-3.5 text-[#737373] absolute left-3 top-1/2 -translate-y-1/2" />
               <input
@@ -81,8 +84,13 @@ export default function Sidebar({
 
         {/* Sessions List */}
         <div className="flex-1 overflow-y-auto px-2 space-y-1 py-1">
-          <div className="px-3 py-1 text-[11px] font-medium text-[#737373] uppercase tracking-wider">
-            Recent Tasks ({sessions.length})
+          <div className="px-3 py-1 text-[11px] font-medium text-[#737373] uppercase tracking-wider flex items-center justify-between">
+            <span>Your Tasks ({sessions.length})</span>
+            {currentUser?.isGuest && (
+              <span className="text-[10px] text-[#eab308] bg-[#eab308]/10 px-1.5 py-0.5 rounded">
+                Guest Mode
+              </span>
+            )}
           </div>
 
           {filteredSessions.length === 0 ? (
@@ -140,26 +148,53 @@ export default function Sidebar({
           )}
         </div>
 
-        {/* Footer / System status */}
-        <div className="p-3 border-t border-[#2a2a2a] bg-[#141414]">
-          <div className="bg-[#1c1c1c] p-2.5 rounded-xl border border-[#2a2a2a]">
-            <div className="flex items-center justify-between text-xs text-white font-medium mb-1.5">
-              <div className="flex items-center gap-1.5">
-                <Cpu className="w-3.5 h-3.5 text-[#10a37f]" />
-                <span>Multi-Model Router</span>
+        {/* Footer: User Account Status & Model Status */}
+        <div className="p-3 border-t border-[#2a2a2a] bg-[#141414] space-y-2">
+          {/* User Account / Guest Switcher */}
+          <div className="flex items-center justify-between p-2 rounded-xl bg-[#1c1c1c] border border-[#2a2a2a] text-xs">
+            <div className="flex items-center gap-2 truncate">
+              <div className={`w-6 h-6 rounded-full flex items-center justify-center shrink-0 ${
+                currentUser?.isGuest ? 'bg-[#333333] text-[#a3a3a3]' : 'bg-[#10a37f]/20 text-[#10a37f]'
+              }`}>
+                {currentUser?.isGuest ? <User className="w-3.5 h-3.5" /> : <ShieldCheck className="w-3.5 h-3.5" />}
               </div>
-              <span className="w-2 h-2 rounded-full bg-[#22c55e] animate-pulse" />
+              <div className="truncate text-white font-medium text-[11px]">
+                {currentUser?.username || 'Guest'}
+              </div>
             </div>
 
-            <div className="flex flex-col gap-1 text-[11px] text-[#8e8e8e]">
-              <div className="flex justify-between items-center">
-                <span>Primary:</span>
-                <span className="text-[#60a5fa] font-mono">Gemini 3.6 Flash</span>
+            {currentUser?.isGuest ? (
+              <button
+                onClick={onOpenAuth}
+                className="text-[11px] text-[#10a37f] hover:underline flex items-center gap-1 font-medium ml-2 shrink-0"
+              >
+                <LogIn className="w-3 h-3" />
+                <span>Sign In</span>
+              </button>
+            ) : (
+              <button
+                onClick={onLogout}
+                title="Log out"
+                className="text-[11px] text-[#ef4444] hover:text-[#f87171] p-1 rounded hover:bg-[#2b2b2b] transition shrink-0 ml-2"
+              >
+                <LogOut className="w-3.5 h-3.5" />
+              </button>
+            )}
+          </div>
+
+          {/* Model indicator */}
+          <div className="bg-[#1c1c1c] p-2 rounded-xl border border-[#2a2a2a]">
+            <div className="flex items-center justify-between text-[11px] text-white font-medium mb-1">
+              <div className="flex items-center gap-1.5">
+                <Cpu className="w-3 h-3 text-[#10a37f]" />
+                <span>Router Status</span>
               </div>
-              <div className="flex justify-between items-center">
-                <span>Fallback:</span>
-                <span className="text-[#c084fc] font-mono">Groq Qwen 27B</span>
-              </div>
+              <span className="w-1.5 h-1.5 rounded-full bg-[#22c55e] animate-pulse" />
+            </div>
+
+            <div className="flex justify-between items-center text-[10px] text-[#737373]">
+              <span>Primary: <span className="text-[#60a5fa] font-mono">Gemini 3.6</span></span>
+              <span>Fallback: <span className="text-[#c084fc] font-mono">Groq 27B</span></span>
             </div>
           </div>
         </div>

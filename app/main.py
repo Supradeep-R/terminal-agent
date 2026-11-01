@@ -4,12 +4,12 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from contextlib import asynccontextmanager
 from sqlmodel import Session, select
-from typing import List
+from typing import List, Optional
 import uuid
 
 from app.db import init_db, get_session
 from app.agent import run_agent_loop
-from app.models import AgentSession, AgentStep, AgentSessionRead
+from app.models import AgentSession, AgentStep, AgentSessionRead, SimpleUser
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -39,6 +39,26 @@ app.add_middleware(
 def health_check():
     return {"status": "ok", "message": "Terminal Agent API running"}
 
+# Auth Endpoint: Login or auto-register simple username/password
+@app.post("/api/auth/login", tags=["Auth"])
+def login_or_register(user_data: dict, db: Session = Depends(get_session)):
+    username = user_data.get("username", "").strip()
+    password = user_data.get("password", "").strip()
+    if not username or not password:
+        raise HTTPException(status_code=400, detail="Username and password are required")
+
+    user = db.get(SimpleUser, username)
+    if not user:
+        # First time seeing this user: register them!
+        new_user = SimpleUser(username=username, password=password)
+        db.add(new_user)
+        db.commit()
+        return {"status": "registered", "username": username}
+    else:
+        if user.password != password:
+            raise HTTPException(status_code=401, detail="Incorrect password for this username")
+        return {"status": "authenticated", "username": username}
+
 # 1. Create a new session (Start a new task)
 @app.post("/api/sessions", response_model=AgentSessionRead, tags=["Sessions"])
 @app.post("/api/session", response_model=AgentSessionRead, include_in_schema=False)
@@ -49,12 +69,13 @@ def create_session(
 ):
     """
     Creates a new session and launches the agent loop in the background.
-    Body format: {"goal": "Check project files and create a readme"}
+    Body format: {"goal": "Check project files", "user_id": "guest_123"}
     """
     if "goal" not in goal_data or not goal_data["goal"].strip():
         raise HTTPException(status_code=400, detail="Goal cannot be empty")
 
-    new_session = AgentSession(goal=goal_data["goal"].strip())
+    user_id = goal_data.get("user_id", "guest")
+    new_session = AgentSession(goal=goal_data["goal"].strip(), user_id=user_id)
     db.add(new_session)
     db.commit()
     db.refresh(new_session)
@@ -91,9 +112,11 @@ def send_follow_up_prompt(
 
 # 3. Get all sessions (For sidebar history)
 @app.get("/api/sessions", response_model=List[AgentSession], tags=["Sessions"])
-def get_sessions(db: Session = Depends(get_session)):
-    """Returns all past sessions ordered by newest first."""
+def get_sessions(user_id: Optional[str] = None, db: Session = Depends(get_session)):
+    """Returns past sessions. If user_id is provided, filters to that user/guest only."""
     statement = select(AgentSession).order_by(AgentSession.created_at.desc())
+    if user_id:
+        statement = statement.where(AgentSession.user_id == user_id)
     results = db.exec(statement)
     return results.all()
 

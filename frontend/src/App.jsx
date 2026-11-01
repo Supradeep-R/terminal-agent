@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import Sidebar from './components/Sidebar';
 import ChatArea from './components/ChatArea';
+import AuthModal from './components/AuthModal';
 import {
   fetchSessions,
   fetchSessionDetails,
@@ -9,7 +10,22 @@ import {
   deleteSession as apiDeleteSession,
 } from './api';
 
+function getInitialUser() {
+  const savedUser = localStorage.getItem('terminal_username');
+  if (savedUser) {
+    return { isGuest: false, username: savedUser, id: savedUser };
+  }
+  let guestId = localStorage.getItem('terminal_guest_id');
+  if (!guestId) {
+    guestId = `guest_${Math.random().toString(36).substring(2, 9)}`;
+    localStorage.setItem('terminal_guest_id', guestId);
+  }
+  return { isGuest: true, username: 'Guest Mode', id: guestId };
+}
+
 export default function App() {
+  const [currentUser, setCurrentUser] = useState(getInitialUser);
+  const [isAuthOpen, setIsAuthOpen] = useState(false);
   const [sessions, setSessions] = useState([]);
   const [activeSessionId, setActiveSessionId] = useState(null);
   const [activeSession, setActiveSession] = useState(null);
@@ -17,10 +33,10 @@ export default function App() {
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const pollingRef = useRef(null);
 
-  // 1. Initial load of all past sessions
-  const loadSessions = async () => {
+  // 1. Load tasks belonging to current user / guest
+  const loadSessions = async (userId = currentUser.id) => {
     try {
-      const data = await fetchSessions();
+      const data = await fetchSessions(userId);
       setSessions(data);
       return data;
     } catch (err) {
@@ -30,8 +46,8 @@ export default function App() {
   };
 
   useEffect(() => {
-    loadSessions();
-  }, []);
+    loadSessions(currentUser.id);
+  }, [currentUser.id]);
 
   // 2. Fetch active session details
   const loadSessionDetails = async (sessionId) => {
@@ -54,7 +70,6 @@ export default function App() {
 
   // 3. Auto-polling loop for active running session
   useEffect(() => {
-    // Clear any existing polling
     if (pollingRef.current) {
       clearInterval(pollingRef.current);
       pollingRef.current = null;
@@ -70,9 +85,8 @@ export default function App() {
           const updated = await fetchSessionDetails(activeSessionId);
           setActiveSession(updated);
 
-          // If finished running, refresh sidebar sessions list
           if (updated.status === 'completed' || updated.status === 'failed') {
-            loadSessions();
+            loadSessions(currentUser.id);
             clearInterval(pollingRef.current);
             pollingRef.current = null;
           }
@@ -88,9 +102,9 @@ export default function App() {
         pollingRef.current = null;
       }
     };
-  }, [activeSessionId, activeSession?.status]);
+  }, [activeSessionId, activeSession?.status, currentUser.id]);
 
-  // 4. Keyboard shortcut: Ctrl+K or Cmd+K for New Chat
+  // 4. Keyboard shortcut: Ctrl+K / Cmd+K
   useEffect(() => {
     const handleKeyDown = (e) => {
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
@@ -116,14 +130,13 @@ export default function App() {
     setIsLoading(true);
     try {
       if (!activeSessionId) {
-        // Start a brand-new session
-        const newSession = await createSession(text);
+        // Create session tagged with current user / guest ID
+        const newSession = await createSession(text, currentUser.id);
         setSessions(prev => [newSession, ...prev]);
         setActiveSessionId(newSession.id);
         setActiveSession(newSession);
       } else {
-        // Send follow-up prompt in current session
-        const updated = await sendPrompt(activeSessionId, text);
+        await sendPrompt(activeSessionId, text);
         setActiveSession(prev => ({
           ...prev,
           status: 'running',
@@ -137,7 +150,7 @@ export default function App() {
   };
 
   const handleDeleteSession = async (sessionId) => {
-    if (!window.confirm('Are you sure you want to delete this session?')) return;
+    if (!window.confirm('Delete this task?')) return;
     try {
       await apiDeleteSession(sessionId);
       setSessions(prev => prev.filter(s => s.id !== sessionId));
@@ -153,7 +166,20 @@ export default function App() {
     if (activeSessionId) {
       await loadSessionDetails(activeSessionId);
     }
-    await loadSessions();
+    await loadSessions(currentUser.id);
+  };
+
+  const handleAuthSuccess = (username) => {
+    localStorage.setItem('terminal_username', username);
+    setCurrentUser({ isGuest: false, username, id: username });
+    handleNewChat();
+  };
+
+  const handleLogout = () => {
+    localStorage.removeItem('terminal_username');
+    const guestId = localStorage.getItem('terminal_guest_id') || `guest_${Math.random().toString(36).substring(2, 9)}`;
+    setCurrentUser({ isGuest: true, username: 'Guest Mode', id: guestId });
+    handleNewChat();
   };
 
   return (
@@ -166,6 +192,9 @@ export default function App() {
         onDeleteSession={handleDeleteSession}
         isOpen={isSidebarOpen}
         onClose={() => setIsSidebarOpen(false)}
+        currentUser={currentUser}
+        onOpenAuth={() => setIsAuthOpen(true)}
+        onLogout={handleLogout}
       />
 
       <ChatArea
@@ -174,6 +203,13 @@ export default function App() {
         onRefresh={handleRefresh}
         onToggleSidebar={() => setIsSidebarOpen(!isSidebarOpen)}
         isLoading={isLoading}
+      />
+
+      <AuthModal
+        isOpen={isAuthOpen}
+        onClose={() => setIsAuthOpen(false)}
+        onAuthSuccess={handleAuthSuccess}
+        currentUserId={currentUser.id}
       />
     </div>
   );
