@@ -101,5 +101,19 @@ class RunnerManager:
         except Exception as e:
             return f"[Runner Error] Failed waiting for local tool execution: {e}", -1
 
+    def cancel_execution(self, user_id: str):
+        """Sends a cancellation signal to the active process on the local runner."""
+        websocket = self.active_runners.get(user_id)
+        if websocket and self.loop and not self.loop.is_closed():
+            coro = websocket.send_text(json.dumps({"type": "cancel"}))
+            asyncio.run_coroutine_threadsafe(coro, self.loop)
+
+    def send_input(self, user_id: str, input_text: str):
+        """Sends interactive standard input to the active process on the local runner."""
+        websocket = self.active_runners.get(user_id)
+        if websocket and self.loop and not self.loop.is_closed():
+            coro = websocket.send_text(json.dumps({"type": "input", "input": input_text}))
+            asyncio.run_coroutine_threadsafe(coro, self.loop)
+
 # Global singleton
 runner_manager = RunnerManager()

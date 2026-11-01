@@ -1,16 +1,36 @@
 import React, { useState } from 'react';
 import { 
   Terminal, Check, Copy, ChevronDown, ChevronUp, AlertCircle, 
-  Sparkles, Brain, Wrench, AlertTriangle, Zap, CheckCircle2, Loader2 
+  Sparkles, Brain, Wrench, AlertTriangle, Zap, CheckCircle2, Loader2, Send 
 } from 'lucide-react';
+import { sendTerminalInput } from '../api';
 
-export default function TerminalCard({ step }) {
+export default function TerminalCard({ step, sessionId }) {
   const [copied, setCopied] = useState(false);
   const [isExpanded, setIsExpanded] = useState(true);
   const [showDetails, setShowDetails] = useState(false);
+  const [stdinText, setStdinText] = useState('');
+  const [isSendingStdin, setIsSendingStdin] = useState(false);
+  const [stdinHistory, setStdinHistory] = useState([]);
 
   const isExecuting = step.output === null || step.output === undefined;
   const isSuccess = !isExecuting && step.output && !step.output.includes('[Exit Code: -1]') && !step.output.toLowerCase().includes('error:');
+
+  const handleSendStdin = async (e) => {
+    e.preventDefault();
+    if (!stdinText.trim() || !sessionId || isSendingStdin) return;
+    const textToSend = stdinText;
+    setIsSendingStdin(true);
+    try {
+      await sendTerminalInput(sessionId, textToSend);
+      setStdinHistory(prev => [...prev, textToSend]);
+      setStdinText('');
+    } catch (err) {
+      alert(`Error sending terminal input: ${err.message}`);
+    } finally {
+      setIsSendingStdin(false);
+    }
+  };
 
   // Parse routing trace if available
   let parsedTrace = [];
@@ -166,11 +186,56 @@ export default function TerminalCard({ step }) {
               <span className="text-[10px] text-[#52525b]">stdout + stderr</span>
             </div>
             {isExecuting ? (
-              <div className="bg-[#0b0b0b] rounded-lg p-3.5 border border-[#222222] flex items-center gap-2.5 text-[#60a5fa] font-mono text-xs">
-                <Loader2 className="w-3.5 h-3.5 animate-spin text-[#38bdf8] shrink-0" />
-                <span className="animate-pulse">
-                  Executing command on {step.model_name?.includes('Local') ? 'Local Machine' : 'Cloud Sandbox'}...
-                </span>
+              <div className="space-y-2">
+                <div className="bg-[#0b0b0b] rounded-lg p-3.5 border border-[#222222] flex items-center gap-2.5 text-[#60a5fa] font-mono text-xs">
+                  <Loader2 className="w-3.5 h-3.5 animate-spin text-[#38bdf8] shrink-0" />
+                  <span className="animate-pulse">
+                    Executing command on {step.model_name?.includes('Local') ? 'Local Machine' : 'Cloud Sandbox'}...
+                  </span>
+                </div>
+
+                {sessionId && (
+                  <div className="bg-[#18181b] rounded-lg p-2.5 border border-[#3b82f6]/40 space-y-2">
+                    <div className="flex items-center justify-between text-[11px] text-[#93c5fd]">
+                      <span className="font-semibold flex items-center gap-1.5 font-sans">
+                        <Terminal className="w-3.5 h-3.5 text-[#60a5fa]" />
+                        Interactive Terminal Prompt
+                      </span>
+                      <span className="text-[10px] text-[#9ca3af] font-sans">Send input if command pauses</span>
+                    </div>
+
+                    <form onSubmit={handleSendStdin} className="flex gap-2">
+                      <div className="relative flex-1">
+                        <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-[#60a5fa] font-mono text-xs font-bold">&gt;</span>
+                        <input
+                          type="text"
+                          value={stdinText}
+                          onChange={(e) => setStdinText(e.target.value)}
+                          placeholder="Respond to prompt (e.g. Y, value, Enter)..."
+                          className="w-full bg-[#09090b] border border-[#27272a] rounded-md pl-7 pr-2.5 py-1.5 text-xs text-white placeholder-[#71717a] font-mono focus:outline-none focus:border-[#3b82f6]"
+                        />
+                      </div>
+                      <button
+                        type="submit"
+                        disabled={!stdinText.trim() || isSendingStdin}
+                        className="px-3 py-1.5 rounded-md bg-[#2563eb] hover:bg-[#1d4ed8] text-white text-xs font-medium font-sans flex items-center gap-1.5 transition disabled:opacity-40 disabled:cursor-not-allowed shrink-0"
+                      >
+                        {isSendingStdin ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
+                        <span>Send</span>
+                      </button>
+                    </form>
+
+                    {stdinHistory.length > 0 && (
+                      <div className="text-[11px] text-[#4ade80] font-mono flex flex-wrap gap-1.5 pt-1">
+                        {stdinHistory.map((h, i) => (
+                          <span key={i} className="bg-[#14532d]/40 px-2 py-0.5 rounded border border-[#22c55e]/30">
+                            Sent: &quot;{h}&quot;
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             ) : (
               <div className="bg-[#0b0b0b] rounded-lg p-3 border border-[#222222] overflow-x-auto max-h-80 text-[#d4d4d4] leading-relaxed whitespace-pre-wrap select-text font-mono text-xs">

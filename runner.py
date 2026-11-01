@@ -32,8 +32,13 @@ except ImportError:
     import asyncio
 
 
+# Active process tracker for cancellation and stdin input
+active_process = None
+
+
 def execute_local_command(command: str, timeout: int = 45):
     """Executes a command on the local OS and returns stdout/stderr and exit code."""
+    global active_process
     try:
         clean_cmd = command.strip()
         if os.name == "nt":
@@ -45,29 +50,41 @@ def execute_local_command(command: str, timeout: int = 45):
             elif clean_cmd.lower().startswith("powershell "):
                 clean_cmd = clean_cmd[len("powershell "):].strip()
 
-            proc = subprocess.run(
+            active_process = subprocess.Popen(
                 ["powershell", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", clean_cmd],
-                capture_output=True,
-                text=True,
-                stdin=subprocess.DEVNULL,
-                timeout=timeout
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                stdin=subprocess.PIPE,
+                text=True
             )
         else:
             # Unix / macOS: Run in bash
-            proc = subprocess.run(
+            active_process = subprocess.Popen(
                 ["/bin/bash", "-c", command],
-                capture_output=True,
-                text=True,
-                stdin=subprocess.DEVNULL,
-                timeout=timeout
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                stdin=subprocess.PIPE,
+                text=True
             )
-        output = proc.stdout + proc.stderr
-        return output.strip(), proc.returncode
-    except subprocess.TimeoutExpired as e:
-        so_far = (e.stdout or "") + (e.stderr or "")
-        return f"[Runner Error] Command timed out after {timeout} seconds on local machine.\n{so_far}".strip(), -1
+
+        stdout, stderr = active_process.communicate(timeout=timeout)
+        output = stdout + stderr
+        return output.strip(), active_process.returncode
+
+    except subprocess.TimeoutExpired:
+        if active_process:
+            try:
+                if os.name == "nt":
+                    subprocess.run(["taskkill", "/F", "/T", "/PID", str(active_process.pid)], capture_output=True)
+                else:
+                    active_process.kill()
+            except Exception:
+                pass
+        return f"[Runner Error] Command timed out after {timeout} seconds on local machine.", -1
     except Exception as e:
         return f"[Error] Execution failed: {e}", -1
+    finally:
+        active_process = None
 
 
 def view_file_local(path: str, start_line=None, end_line=None):
@@ -192,6 +209,31 @@ async def run_daemon(server_url: str, user_id: str):
                         msg_type = data.get("type")
 
                         req_id = data.get("request_id")
+
+                        # Immediate cancellation of running process
+                        if msg_type == "cancel":
+                            print("\n🛑 [CANCEL] Stopping active local process by user request...")
+                            if active_process:
+                                try:
+                                    if os.name == "nt":
+                                        subprocess.run(["taskkill", "/F", "/T", "/PID", str(active_process.pid)], capture_output=True)
+                                    else:
+                                        active_process.kill()
+                                except Exception as err:
+                                    print(f"[Cancel Error] {err}")
+                            continue
+
+                        # Standard input delivery from UI to active process
+                        if msg_type == "input":
+                            inp = data.get("input", "")
+                            print(f"\n⌨️ [STDIN INPUT FROM UI] > {inp}")
+                            if active_process and active_process.stdin:
+                                try:
+                                    active_process.stdin.write(inp + "\n")
+                                    active_process.stdin.flush()
+                                except Exception as err:
+                                    print(f"[Stdin Error] {err}")
+                            continue
 
                         if msg_type == "exec":
                             cmd = data.get("command", "")

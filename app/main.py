@@ -11,7 +11,7 @@ from typing import List, Optional
 import uuid
 
 from app.db import init_db, get_session
-from app.agent import run_agent_loop, handle_approval_decision
+from app.agent import run_agent_loop, handle_approval_decision, cancel_session
 from app.models import AgentSession, AgentStep, AgentSessionRead, SimpleUser
 from app.runner_manager import runner_manager
 
@@ -188,6 +188,30 @@ def submit_approval(
     feedback = data.get("feedback")
     background_tasks.add_task(handle_approval_decision, session_id, decision, feedback)
     return session_item
+
+# Stop / Cancel Running Session Immediately
+@app.post("/api/sessions/{session_id}/stop", response_model=AgentSessionRead, tags=["Sessions"])
+@app.post("/api/sessions/{session_id}/cancel", response_model=AgentSessionRead, include_in_schema=False)
+def stop_session(session_id: uuid.UUID, db: Session = Depends(get_session)):
+    """Stops an active running agent session immediately and kills any running process."""
+    session_item = db.get(AgentSession, session_id)
+    if not session_item:
+        raise HTTPException(status_code=404, detail="Session not found")
+    cancel_session(session_id)
+    db.refresh(session_item)
+    return session_item
+
+# Send Interactive Standard Input (stdin) to active process
+@app.post("/api/sessions/{session_id}/input", tags=["Sessions"])
+def send_terminal_input(session_id: uuid.UUID, data: dict, db: Session = Depends(get_session)):
+    """Delivers interactive text input (stdin) to a command waiting for user input."""
+    session_item = db.get(AgentSession, session_id)
+    if not session_item:
+        raise HTTPException(status_code=404, detail="Session not found")
+    user_id = session_item.user_id or "guest"
+    input_text = data.get("input", "")
+    runner_manager.send_input(user_id, input_text)
+    return {"status": "sent", "input": input_text}
 
 # 3. Get all sessions (For sidebar history)
 @app.get("/api/sessions", response_model=List[AgentSession], tags=["Sessions"])

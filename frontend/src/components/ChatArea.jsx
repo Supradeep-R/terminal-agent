@@ -1,10 +1,10 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { ArrowUp, Menu, RefreshCw, Loader2, Bot, Terminal, Copy, Check, Zap, AlertTriangle, Brain, Laptop, FileCode, ShieldAlert } from 'lucide-react';
+import { ArrowUp, Menu, RefreshCw, Loader2, Bot, Terminal, Copy, Check, Zap, AlertTriangle, Brain, Laptop, FileCode, ShieldAlert, Square } from 'lucide-react';
 import TerminalCard from './TerminalCard';
 import DiffViewerCard from './DiffViewerCard';
 import SafetyApprovalCard from './SafetyApprovalCard';
 import EmptyState from './EmptyState';
-import { submitApproval } from '../api';
+import { submitApproval, stopSession } from '../api';
 
 export default function ChatArea({
   activeSession,
@@ -18,6 +18,7 @@ export default function ChatArea({
   const [inputText, setInputText] = useState('');
   const [copiedId, setCopiedId] = useState(null);
   const [isApproving, setIsApproving] = useState(false);
+  const [isStopping, setIsStopping] = useState(false);
   const messagesEndRef = useRef(null);
   const textareaRef = useRef(null);
 
@@ -48,6 +49,19 @@ export default function ChatArea({
       alert(`Rejection error: ${err.message}`);
     } finally {
       setIsApproving(false);
+    }
+  };
+
+  const handleStop = async () => {
+    if (!activeSession?.id) return;
+    setIsStopping(true);
+    try {
+      await stopSession(activeSession.id);
+      onRefresh();
+    } catch (err) {
+      alert(`Stop error: ${err.message}`);
+    } finally {
+      setIsStopping(false);
     }
   };
 
@@ -143,6 +157,23 @@ export default function ChatArea({
                 {isWaitingApproval ? 'Needs Approval' : isRunning ? 'Running...' : activeSession.status || 'Ready'}
               </span>
             </div>
+          )}
+
+          {/* Stop execution button when running */}
+          {isRunning && (
+            <button
+              onClick={handleStop}
+              disabled={isStopping}
+              title="Stop execution immediately"
+              className="flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-[#ef4444]/20 border border-[#ef4444]/50 text-[#f87171] hover:bg-[#ef4444]/30 hover:text-white transition cursor-pointer"
+            >
+              {isStopping ? (
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              ) : (
+                <Square className="w-3 h-3 fill-current" />
+              )}
+              <span>Stop</span>
+            </button>
           )}
 
           <button
@@ -253,7 +284,7 @@ export default function ChatArea({
                       {isEditFile ? (
                         <DiffViewerCard step={step} />
                       ) : (
-                        <TerminalCard step={step} />
+                        <TerminalCard step={step} sessionId={activeSession?.id} />
                       )}
                     </div>
                   </div>
@@ -310,22 +341,34 @@ export default function ChatArea({
               className="w-full bg-transparent text-white text-sm placeholder-[#8e8e8e] resize-none focus:outline-none max-h-40 py-2 pr-10 leading-relaxed font-sans"
             />
 
-            <button
-              type="submit"
-              disabled={!inputText.trim() || isRunning}
-              className={`
-                absolute right-2.5 p-2 rounded-full transition shrink-0
-                ${inputText.trim() && !isRunning
-                  ? 'bg-white text-black hover:bg-[#e5e5e5] shadow-md' 
-                  : 'bg-[#404040] text-[#737373] cursor-not-allowed'}
-              `}
-            >
-              {isRunning ? (
-                <Loader2 className="w-4 h-4 animate-spin" />
-              ) : (
+            {isRunning ? (
+              <button
+                type="button"
+                onClick={handleStop}
+                disabled={isStopping}
+                title="Stop execution immediately"
+                className="absolute right-2.5 p-2 rounded-full transition shrink-0 bg-[#ef4444] text-white hover:bg-[#dc2626] shadow-md flex items-center justify-center cursor-pointer"
+              >
+                {isStopping ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  <Square className="w-4 h-4 fill-current" />
+                )}
+              </button>
+            ) : (
+              <button
+                type="submit"
+                disabled={!inputText.trim()}
+                className={`
+                  absolute right-2.5 p-2 rounded-full transition shrink-0
+                  ${inputText.trim()
+                    ? 'bg-white text-black hover:bg-[#e5e5e5] shadow-md' 
+                    : 'bg-[#404040] text-[#737373] cursor-not-allowed'}
+                `}
+              >
                 <ArrowUp className="w-4 h-4" />
-              )}
-            </button>
+              </button>
+            )}
           </form>
 
           <p className="text-center text-[11px] text-[#737373] mt-2">

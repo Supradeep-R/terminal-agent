@@ -155,8 +155,24 @@ SYSTEM_INSTRUCTION = (
     "3. To find code: use 'grep_search' across the directory.\n"
     "4. To run tests, build, or check environment: use 'run_terminal_command'.\n"
     "5. In every tool call, always provide clear reasoning in 'thought'.\n"
-    "6. When the goal is completed, provide a concise final summary without calling any more tools."
+    "6. When the goal is completed, provide a concise final summary without calling any more tools.\n"
+    "7. STRICT NON-INTERACTIVE COMMANDS: Never execute interactive commands or commands that prompt for human input. In PowerShell, ALWAYS separate multiple statements with semicolons ';' (e.g. '$folder = ...; Set-Content ...'). For cmdlets like Join-Path, always supply both -Path and -ChildPath explicitly (e.g. Join-Path -Path $folder -ChildPath 'file.txt') so it never pauses to ask for input."
 )
+
+# Set of sessions requested to stop immediately
+cancelled_sessions: set = set()
+
+def cancel_session(session_id: uuid.UUID):
+    cancelled_sessions.add(str(session_id))
+    with Session(engine) as db:
+        session_item = db.get(AgentSession, session_id)
+        if session_item:
+            session_item.status = "stopped"
+            db.add(session_item)
+            db.commit()
+            user_id = session_item.user_id or "guest"
+            runner_manager.cancel_execution(user_id)
+            print(f"[Agent] Session {session_id} marked as stopped by user.")
 
 
 def build_conversation_history(db: Session, session_item: AgentSession, follow_up_prompt: Optional[str] = None) -> List[Dict[str, Any]]:
@@ -266,6 +282,15 @@ def run_agent_loop(session_id: uuid.UUID, follow_up_prompt: Optional[str] = None
 
         try:
             while steps_in_this_turn < max_steps:
+                # Check for user cancellation before LLM inference
+                if str(session_id) in cancelled_sessions:
+                    print(f"[Agent] Session {session_id} stopped by user before LLM call.")
+                    session_item.status = "stopped"
+                    db.add(session_item)
+                    db.commit()
+                    cancelled_sessions.discard(str(session_id))
+                    return
+
                 llm_response = router.generate(
                     messages=messages,
                     system_instruction=dynamic_system_prompt,
@@ -295,6 +320,15 @@ def run_agent_loop(session_id: uuid.UUID, follow_up_prompt: Optional[str] = None
 
                 # Case 2: Agent requested tool calls
                 for tool_call in llm_response.tool_calls:
+                    # Check for user cancellation before tool execution
+                    if str(session_id) in cancelled_sessions:
+                        print(f"[Agent] Session {session_id} stopped by user before tool call.")
+                        session_item.status = "stopped"
+                        db.add(session_item)
+                        db.commit()
+                        cancelled_sessions.discard(str(session_id))
+                        return
+
                     tool_name = tool_call.name
                     thought_content = tool_call.args.get("thought") or (llm_response.text.strip() if llm_response.text else None) or "Executing tool to progress toward goal."
 
@@ -402,9 +436,10 @@ def run_agent_loop(session_id: uuid.UUID, follow_up_prompt: Optional[str] = None
                         "content": f"Tool Output [Exit Code {exit_code}]:\n{output}"
                     })
 
-            session_item.status = "completed"
-            db.add(session_item)
-            db.commit()
+            if session_item.status not in ["stopped", "awaiting_approval"]:
+                session_item.status = "completed"
+                db.add(session_item)
+                db.commit()
 
         except Exception as e:
             print(f"[Agent Error] {e}")

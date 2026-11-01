@@ -81,3 +81,28 @@ export async function submitApproval(sessionId, decision, feedback = '') {
   if (!res.ok) throw new Error('Failed to submit approval');
   return res.json();
 }
+
+export async function stopSession(sessionId) {
+  const res = await fetch(`${API_BASE}/api/sessions/${sessionId}/stop`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || 'Failed to stop session');
+  }
+  return res.json();
+}
+
+export async function sendTerminalInput(sessionId, input) {
+  const res = await fetch(`${API_BASE}/api/sessions/${sessionId}/input`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ input }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || 'Failed to send terminal input');
+  }
+  return res.json();
+}
