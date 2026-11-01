@@ -4,13 +4,22 @@ from typing import Tuple
 
 def execute_command(command: str, timeout_seconds: int = 30) -> Tuple[str, int]:
     try:
+        clean_cmd = command.strip()
         # On Windows, use PowerShell so cmdlets (like Get-ChildItem) and standard commands work
         if os.name == 'nt':
-            args = ["powershell", "-NoProfile", "-NonInteractive", "-Command", command]
+            if clean_cmd.lower().startswith("powershell -command "):
+                clean_cmd = clean_cmd[len("powershell -command "):].strip()
+                if (clean_cmd.startswith('"') and clean_cmd.endswith('"')) or (clean_cmd.startswith("'") and clean_cmd.endswith("'")):
+                    clean_cmd = clean_cmd[1:-1]
+            elif clean_cmd.lower().startswith("powershell "):
+                clean_cmd = clean_cmd[len("powershell "):].strip()
+
+            args = ["powershell", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", clean_cmd]
             result = subprocess.run(
                 args,
                 text=True,
                 capture_output=True,
+                stdin=subprocess.DEVNULL,
                 timeout=timeout_seconds
             )
         else:
@@ -19,6 +28,7 @@ def execute_command(command: str, timeout_seconds: int = 30) -> Tuple[str, int]:
                 shell=True,
                 text=True,
                 capture_output=True,
+                stdin=subprocess.DEVNULL,
                 timeout=timeout_seconds
             )
 

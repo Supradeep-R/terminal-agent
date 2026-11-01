@@ -1,9 +1,11 @@
 import React, { useState } from 'react';
-import { FileCode, Check, Copy, ChevronDown, ChevronUp, Brain, Zap, GitCommit } from 'lucide-react';
+import { FileCode, Check, Copy, ChevronDown, ChevronUp, Brain, Zap, GitCommit, Loader2 } from 'lucide-react';
 
 export default function DiffViewerCard({ step }) {
   const [copied, setCopied] = useState(false);
   const [isExpanded, setIsExpanded] = useState(true);
+
+  const isExecuting = step.output === null || step.output === undefined;
 
   const handleCopy = (e) => {
     e.stopPropagation();
@@ -47,10 +49,17 @@ export default function DiffViewerCard({ step }) {
             </span>
           )}
 
-          <span className="text-[11px] px-2 py-0.5 rounded-full font-medium flex items-center gap-1 bg-[#1e293b] text-[#38bdf8] border border-[#0284c7]/30">
-            <GitCommit className="w-3 h-3" />
-            <span>Diff Patch</span>
-          </span>
+          {isExecuting ? (
+            <span className="text-[11px] px-2.5 py-0.5 rounded-full font-medium flex items-center gap-1.5 bg-[#0369a1]/30 text-[#38bdf8] border border-[#0284c7]/40 animate-pulse">
+              <Loader2 className="w-3 h-3 animate-spin text-[#38bdf8]" />
+              <span>Patching...</span>
+            </span>
+          ) : (
+            <span className="text-[11px] px-2 py-0.5 rounded-full font-medium flex items-center gap-1 bg-[#1e293b] text-[#38bdf8] border border-[#0284c7]/30">
+              <GitCommit className="w-3 h-3" />
+              <span>Diff Patch</span>
+            </span>
+          )}
 
           <button
             onClick={handleCopy}
@@ -92,26 +101,33 @@ export default function DiffViewerCard({ step }) {
               </div>
             </div>
 
-            <div className="p-2 select-text font-mono text-[11px] leading-relaxed">
-              {diffLines.map((line, idx) => {
-                let lineStyle = 'text-[#94a3b8]';
-                if (line.startsWith('+') && !line.startsWith('+++')) {
-                  lineStyle = 'bg-[#14532d]/40 text-[#4ade80] px-1 rounded-xs font-semibold block';
-                } else if (line.startsWith('-') && !line.startsWith('---')) {
-                  lineStyle = 'bg-[#7f1d1d]/40 text-[#f87171] px-1 rounded-xs block';
-                } else if (line.startsWith('@@')) {
-                  lineStyle = 'text-[#38bdf8] bg-[#0c4a6e]/20 px-1 rounded-xs font-bold block my-1';
-                } else if (line.startsWith('---') || line.startsWith('+++')) {
-                  lineStyle = 'text-[#94a3b8] font-bold block';
-                }
+            {isExecuting ? (
+              <div className="p-4 flex items-center gap-2.5 text-[#38bdf8] font-mono text-xs">
+                <Loader2 className="w-4 h-4 animate-spin shrink-0" />
+                <span className="animate-pulse">Analyzing file and applying atomic diff patch...</span>
+              </div>
+            ) : (
+              <div className="p-2 select-text font-mono text-[11px] leading-relaxed">
+                {diffLines.map((line, idx) => {
+                  let lineStyle = 'text-[#94a3b8]';
+                  if (line.startsWith('+') && !line.startsWith('+++')) {
+                    lineStyle = 'bg-[#14532d]/40 text-[#4ade80] px-1 rounded-xs font-semibold block';
+                  } else if (line.startsWith('-') && !line.startsWith('---')) {
+                    lineStyle = 'bg-[#7f1d1d]/40 text-[#f87171] px-1 rounded-xs block';
+                  } else if (line.startsWith('@@')) {
+                    lineStyle = 'text-[#38bdf8] bg-[#0c4a6e]/20 px-1 rounded-xs font-bold block my-1';
+                  } else if (line.startsWith('---') || line.startsWith('+++')) {
+                    lineStyle = 'text-[#94a3b8] font-bold block';
+                  }
 
-                return (
-                  <div key={idx} className={lineStyle}>
-                    {line}
-                  </div>
-                );
-              })}
-            </div>
+                  return (
+                    <div key={idx} className={lineStyle}>
+                      {line}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </div>
         </div>
       )}

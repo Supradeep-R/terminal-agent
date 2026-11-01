@@ -298,7 +298,7 @@ def run_agent_loop(session_id: uuid.UUID, follow_up_prompt: Optional[str] = None
                     tool_name = tool_call.name
                     thought_content = tool_call.args.get("thought") or (llm_response.text.strip() if llm_response.text else None) or "Executing tool to progress toward goal."
 
-                    # 1. Shell Command Execution with Human-in-the-Loop Safety Guardrail
+                    # 1. Determine command string & check safety
                     if tool_name == "run_terminal_command":
                         command_to_run = tool_call.args.get("command", "")
                         is_dangerous, risk_reason = check_command_safety(command_to_run)
@@ -313,21 +313,9 @@ def run_agent_loop(session_id: uuid.UUID, follow_up_prompt: Optional[str] = None
                             db.commit()
                             return  # Pause loop and wait for human decision
 
-                        steps_in_this_turn += 1
-                        current_step_number += 1
-                        print(f"[Agent] Step {current_step_number} [{env_label}]: Executing -> {command_to_run}")
-
-                        if has_local_runner:
-                            output, exit_code = runner_manager.execute_remote(user_id, command_to_run)
-                        else:
-                            output, exit_code = execute_command(command_to_run)
-
                         step_command = command_to_run
 
-                    # 2. View File Content Tool
                     elif tool_name == "view_file":
-                        steps_in_this_turn += 1
-                        current_step_number += 1
                         file_path = tool_call.args.get("path", "")
                         s_line = tool_call.args.get("start_line")
                         e_line = tool_call.args.get("end_line")
@@ -335,35 +323,61 @@ def run_agent_loop(session_id: uuid.UUID, follow_up_prompt: Optional[str] = None
                         if s_line or e_line:
                             step_command += f" ({s_line or 1}-{e_line or 'end'})"
 
+                    elif tool_name == "edit_file":
+                        file_path = tool_call.args.get("path", "")
+                        step_command = f"edit_file {file_path}"
+
+                    elif tool_name == "grep_search":
+                        query = tool_call.args.get("query", "")
+                        search_path = tool_call.args.get("path", ".")
+                        step_command = f"grep_search '{query}' in {search_path}"
+
+                    else:
+                        step_command = f"tool {tool_name}"
+
+                    steps_in_this_turn += 1
+                    current_step_number += 1
+
+                    # ⚡ LIVE SIMULTANEOUS DISPLAY: Save step immediately with output=None
+                    # This allows the frontend to show the thought, tool name, and command actively executing!
+                    step_record = AgentStep(
+                        session_id=session_id,
+                        step_number=current_step_number,
+                        thought=thought_content,
+                        command=step_command,
+                        output=None,
+                        model_name=model_identifier,
+                        routing_trace=routing_trace_json
+                    )
+                    db.add(step_record)
+                    db.commit()
+                    db.refresh(step_record)
+
+                    # Now execute the tool
+                    if tool_name == "run_terminal_command":
+                        print(f"[Agent] Step {current_step_number} [{env_label}]: Executing -> {command_to_run}")
+                        if has_local_runner:
+                            output, exit_code = runner_manager.execute_remote(user_id, command_to_run)
+                        else:
+                            output, exit_code = execute_command(command_to_run)
+
+                    elif tool_name == "view_file":
                         print(f"[Agent] Step {current_step_number} [{env_label}]: Viewing file -> {file_path}")
                         if has_local_runner:
                             output, exit_code = runner_manager.execute_remote_tool(user_id, "view_file", {"path": file_path, "start_line": s_line, "end_line": e_line})
                         else:
                             output, exit_code = view_file_content(file_path, s_line, e_line)
 
-                    # 3. Edit File Content Tool (Unified Diff Generation)
                     elif tool_name == "edit_file":
-                        steps_in_this_turn += 1
-                        current_step_number += 1
-                        file_path = tool_call.args.get("path", "")
                         target = tool_call.args.get("target_string", "")
                         replacement = tool_call.args.get("replacement_string", "")
-                        step_command = f"edit_file {file_path}"
-
                         print(f"[Agent] Step {current_step_number} [{env_label}]: Editing file -> {file_path}")
                         if has_local_runner:
                             output, exit_code = runner_manager.execute_remote_tool(user_id, "edit_file", {"path": file_path, "target_string": target, "replacement_string": replacement})
                         else:
                             output, exit_code = edit_file_content(file_path, target, replacement)
 
-                    # 4. Grep Search Tool
                     elif tool_name == "grep_search":
-                        steps_in_this_turn += 1
-                        current_step_number += 1
-                        query = tool_call.args.get("query", "")
-                        search_path = tool_call.args.get("path", ".")
-                        step_command = f"grep_search '{query}' in {search_path}"
-
                         print(f"[Agent] Step {current_step_number} [{env_label}]: Searching -> '{query}'")
                         if has_local_runner:
                             output, exit_code = runner_manager.execute_remote_tool(user_id, "grep", {"query": query, "path": search_path})
@@ -371,21 +385,10 @@ def run_agent_loop(session_id: uuid.UUID, follow_up_prompt: Optional[str] = None
                             output, exit_code = grep_search_content(query, search_path)
 
                     else:
-                        steps_in_this_turn += 1
-                        current_step_number += 1
-                        step_command = f"tool {tool_name}"
                         output, exit_code = f"Unknown tool: {tool_name}", 1
 
-                    # Save step to database
-                    step_record = AgentStep(
-                        session_id=session_id,
-                        step_number=current_step_number,
-                        thought=thought_content,
-                        command=step_command,
-                        output=output,
-                        model_name=model_identifier,
-                        routing_trace=routing_trace_json
-                    )
+                    # Update step record with the final output once execution finishes
+                    step_record.output = output
                     db.add(step_record)
                     db.commit()
 

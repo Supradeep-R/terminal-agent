@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { 
   Terminal, Check, Copy, ChevronDown, ChevronUp, AlertCircle, 
-  Sparkles, Brain, Wrench, AlertTriangle, Zap, CheckCircle2 
+  Sparkles, Brain, Wrench, AlertTriangle, Zap, CheckCircle2, Loader2 
 } from 'lucide-react';
 
 export default function TerminalCard({ step }) {
@@ -9,7 +9,8 @@ export default function TerminalCard({ step }) {
   const [isExpanded, setIsExpanded] = useState(true);
   const [showDetails, setShowDetails] = useState(false);
 
-  const isSuccess = step.output && !step.output.includes('[Exit Code: -1]') && !step.output.toLowerCase().includes('error:');
+  const isExecuting = step.output === null || step.output === undefined;
+  const isSuccess = !isExecuting && step.output && !step.output.includes('[Exit Code: -1]') && !step.output.toLowerCase().includes('error:');
 
   // Parse routing trace if available
   let parsedTrace = [];
@@ -71,14 +72,21 @@ export default function TerminalCard({ step }) {
           )}
 
           {/* Status pill */}
-          <span className={`text-[11px] px-2 py-0.5 rounded-full font-medium flex items-center gap-1 ${
-            isSuccess 
-              ? 'bg-[#14532d]/60 text-[#4ade80] border border-[#22c55e]/30' 
-              : 'bg-[#7f1d1d]/60 text-[#f87171] border border-[#ef4444]/30'
-          }`}>
-            {isSuccess ? <Check className="w-3 h-3" /> : <AlertCircle className="w-3 h-3" />}
-            {isSuccess ? 'Exit 0' : 'Failed'}
-          </span>
+          {isExecuting ? (
+            <span className="text-[11px] px-2.5 py-0.5 rounded-full font-medium flex items-center gap-1.5 bg-[#1e3a8a]/60 text-[#60a5fa] border border-[#3b82f6]/40 animate-pulse">
+              <Loader2 className="w-3 h-3 animate-spin text-[#38bdf8]" />
+              <span>Running...</span>
+            </span>
+          ) : (
+            <span className={`text-[11px] px-2 py-0.5 rounded-full font-medium flex items-center gap-1 ${
+              isSuccess 
+                ? 'bg-[#14532d]/60 text-[#4ade80] border border-[#22c55e]/30' 
+                : 'bg-[#7f1d1d]/60 text-[#f87171] border border-[#ef4444]/30'
+            }`}>
+              {isSuccess ? <Check className="w-3 h-3" /> : <AlertCircle className="w-3 h-3" />}
+              {isSuccess ? 'Exit 0' : 'Failed'}
+            </span>
+          )}
 
           <button
             onClick={handleCopy}
@@ -157,9 +165,18 @@ export default function TerminalCard({ step }) {
               <span>Terminal Sandbox Output:</span>
               <span className="text-[10px] text-[#52525b]">stdout + stderr</span>
             </div>
-            <div className="bg-[#0b0b0b] rounded-lg p-3 border border-[#222222] overflow-x-auto max-h-80 text-[#d4d4d4] leading-relaxed whitespace-pre-wrap select-text font-mono text-xs">
-              {step.output || <span className="text-[#737373] italic">(No output produced)</span>}
-            </div>
+            {isExecuting ? (
+              <div className="bg-[#0b0b0b] rounded-lg p-3.5 border border-[#222222] flex items-center gap-2.5 text-[#60a5fa] font-mono text-xs">
+                <Loader2 className="w-3.5 h-3.5 animate-spin text-[#38bdf8] shrink-0" />
+                <span className="animate-pulse">
+                  Executing command on {step.model_name?.includes('Local') ? 'Local Machine' : 'Cloud Sandbox'}...
+                </span>
+              </div>
+            ) : (
+              <div className="bg-[#0b0b0b] rounded-lg p-3 border border-[#222222] overflow-x-auto max-h-80 text-[#d4d4d4] leading-relaxed whitespace-pre-wrap select-text font-mono text-xs">
+                {step.output || <span className="text-[#737373] italic">(No output produced)</span>}
+              </div>
+            )}
           </div>
         </div>
       )}

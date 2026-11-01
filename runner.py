@@ -35,12 +35,21 @@ except ImportError:
 def execute_local_command(command: str, timeout: int = 45):
     """Executes a command on the local OS and returns stdout/stderr and exit code."""
     try:
+        clean_cmd = command.strip()
         if os.name == "nt":
-            # Windows: Run in PowerShell
+            # If command has redundant outer 'powershell -Command "..."', unwrap it to avoid nested quoting hang
+            if clean_cmd.lower().startswith("powershell -command "):
+                clean_cmd = clean_cmd[len("powershell -command "):].strip()
+                if (clean_cmd.startswith('"') and clean_cmd.endswith('"')) or (clean_cmd.startswith("'") and clean_cmd.endswith("'")):
+                    clean_cmd = clean_cmd[1:-1]
+            elif clean_cmd.lower().startswith("powershell "):
+                clean_cmd = clean_cmd[len("powershell "):].strip()
+
             proc = subprocess.run(
-                ["powershell", "-NoProfile", "-NonInteractive", "-Command", command],
+                ["powershell", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", clean_cmd],
                 capture_output=True,
                 text=True,
+                stdin=subprocess.DEVNULL,
                 timeout=timeout
             )
         else:
@@ -49,12 +58,14 @@ def execute_local_command(command: str, timeout: int = 45):
                 ["/bin/bash", "-c", command],
                 capture_output=True,
                 text=True,
+                stdin=subprocess.DEVNULL,
                 timeout=timeout
             )
         output = proc.stdout + proc.stderr
         return output.strip(), proc.returncode
-    except subprocess.TimeoutExpired:
-        return f"[Error] Command timed out after {timeout} seconds.", -1
+    except subprocess.TimeoutExpired as e:
+        so_far = (e.stdout or "") + (e.stderr or "")
+        return f"[Runner Error] Command timed out after {timeout} seconds on local machine.\n{so_far}".strip(), -1
     except Exception as e:
         return f"[Error] Execution failed: {e}", -1
 
