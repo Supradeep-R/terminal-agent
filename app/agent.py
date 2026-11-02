@@ -270,13 +270,22 @@ def run_agent_loop(session_id: uuid.UUID, follow_up_prompt: Optional[str] = None
                 "You have full permission and access to local files, folders, and PowerShell/Bash terminal commands."
             )
             env_label = "Local Machine"
+            active_tools = TOOLS_SCHEMA
         else:
             env_instruction = (
-                "\n\nCURRENT EXECUTION ENVIRONMENT: You are currently running inside an isolated cloud Linux container sandbox. "
-                "CRITICAL: This cloud sandbox CANNOT access the user's personal laptop files or Windows drive paths (such as 'C:\\Users\\...'). "
-                "If the user asks to inspect or modify their local computer files, explain that they are in Cloud Sandbox mode and need to connect their Local Runner using the button in the UI."
+                "\n\nCURRENT EXECUTION ENVIRONMENT: \u26a0\ufe0f CLOUD SANDBOX MODE \u2014 NO LOCAL MACHINE CONNECTED.\n"
+                "You are strictly a conversational assistant in this mode. "
+                "You have NO tools available and MUST NOT attempt to run any shell commands, read files, edit files, or execute any code. "
+                "The cloud server hosts sensitive application data (databases, API keys, user records) and executing commands on it is strictly FORBIDDEN. "
+                "If the user asks to run commands, access files, or perform any terminal operation, you MUST:\n"
+                "1. Explain that no local machine is connected and execution on the cloud server is disabled for security reasons.\n"
+                "2. Clearly instruct them to click the green '\ud83d\udcbb Local Machine Active' button in the top header bar of the UI.\n"
+                "3. Run 'python runner.py --token <your-user-id> --server <server-url>' on their local machine to establish the secure bridge.\n"
+                "4. Once connected, you will be able to safely execute commands on THEIR machine.\n"
+                "Until a local machine is connected, you can only answer questions, explain concepts, or help the user plan what to do next."
             )
             env_label = "Cloud Sandbox"
+            active_tools = []  # No tools in cloud mode — pure chat assistant
 
         dynamic_system_prompt = SYSTEM_INSTRUCTION + env_instruction
 
@@ -296,7 +305,7 @@ def run_agent_loop(session_id: uuid.UUID, follow_up_prompt: Optional[str] = None
                 llm_response = router.generate(
                     messages=messages,
                     system_instruction=dynamic_system_prompt,
-                    tools=TOOLS_SCHEMA
+                    tools=active_tools
                 )
 
                 routing_trace_json = json.dumps(llm_response.routing_trace) if getattr(llm_response, "routing_trace", None) else None
@@ -337,6 +346,36 @@ def run_agent_loop(session_id: uuid.UUID, follow_up_prompt: Optional[str] = None
 
                 # Case 2: Agent requested tool calls
                 for tool_call in llm_response.tool_calls:
+                    # SECURITY: Hard block — in Cloud Sandbox mode, tool execution is completely forbidden
+                    # regardless of what the LLM decides. This prevents any access to the cloud server's
+                    # file system, database, environment variables, or process space.
+                    if not has_local_runner:
+                        print(f"[Security] Blocked tool call '{tool_call.name}' in Cloud Sandbox mode — no local runner connected.")
+                        current_step_number += 1
+                        blocked_step = AgentStep(
+                            session_id=session_id,
+                            step_number=current_step_number,
+                            thought="Tool execution was blocked because no local machine is connected.",
+                            command="response",
+                            output=(
+                                "⚠️ **Execution Blocked — Cloud Sandbox Mode**\n\n"
+                                "Running commands on the cloud server is disabled for security reasons "
+                                "(it has access to the application database, API keys, and user data).\n\n"
+                                "To run terminal commands, please:\n"
+                                "1. Click the **🖥 Connect Local Machine** button in the top header.\n"
+                                "2. Follow the instructions to run `python runner.py` on your local machine.\n"
+                                "3. Once connected, retry your request — commands will execute safely on your machine."
+                            ),
+                            model_name=model_identifier,
+                            routing_trace=routing_trace_json
+                        )
+                        db.add(blocked_step)
+                        db.commit()
+                        session_item.status = "completed"
+                        db.add(session_item)
+                        db.commit()
+                        return
+
                     # Check for user cancellation before tool execution
                     if str(session_id) in cancelled_sessions:
                         print(f"[Agent] Session {session_id} stopped by user before tool call.")
