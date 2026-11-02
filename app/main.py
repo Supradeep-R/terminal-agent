@@ -1,6 +1,7 @@
 import os
 import json
 import asyncio
+import httpx
 from fastapi import FastAPI, Depends, HTTPException, BackgroundTasks, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -15,12 +16,39 @@ from app.agent import run_agent_loop, handle_approval_decision, cancel_session
 from app.models import AgentSession, AgentStep, AgentSessionRead, SimpleUser
 from app.runner_manager import runner_manager
 
+
+async def keep_alive_task():
+    """
+    Pings this server's own health endpoint every 8 minutes to prevent
+    Render free-tier spin-down (which triggers after ~15 minutes of inactivity).
+    Only runs when a PUBLIC_URL environment variable is set (i.e., in production).
+    """
+    public_url = os.getenv("PUBLIC_URL", "").rstrip("/")
+    if not public_url:
+        print("[Keep-Alive] PUBLIC_URL not set — skipping self-ping (local dev mode).")
+        return
+
+    ping_url = f"{public_url}/api/health"
+    print(f"[Keep-Alive] Starting self-ping every 8 minutes -> {ping_url}")
+
+    async with httpx.AsyncClient(timeout=15) as client:
+        while True:
+            await asyncio.sleep(8 * 60)  # Wait 8 minutes between pings
+            try:
+                resp = await client.get(ping_url)
+                print(f"[Keep-Alive] Self-ping OK ({resp.status_code})")
+            except Exception as e:
+                print(f"[Keep-Alive] Self-ping failed: {e}")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     print("Initializing Database...")
     init_db()
     runner_manager.set_loop(asyncio.get_running_loop())
     print("Database & RunnerManager initialized successfully!")
+    # Start the keep-alive background task
+    asyncio.create_task(keep_alive_task())
     yield
     print("Shutting Down server...")
 
